@@ -138,7 +138,7 @@ class Filters(BaseModel):
             raise ValueError('A feature cannot be both required and forbidden')
         if self.require_any and set(self.require_any) <= forbidden:
             raise ValueError('All require_any alternatives are forbidden')
-        if set(self.sources) - {'immoweb', 'zimmo', 'realo'}:
+        if set(self.sources) - {'immoweb', 'zimmo', 'realo', 'immovlan', 'immoscoop', 'immomarkt'}:
             raise ValueError('Unknown source name')
         if any(t.lower() not in {'house', 'apartment'} for t in self.property_types):
             raise ValueError('Supported property_types: house, apartment')

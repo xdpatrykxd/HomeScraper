@@ -14,8 +14,8 @@ log = logging.getLogger(__name__)
 class BrowserScraper(PropertyScraper):
     """Base class for crawlers that use browser automation to bypass Cloudflare"""
     
-    def __init__(self, client):
-        super().__init__(client)
+    def __init__(self, client, concurrency=4):
+        super().__init__(client, concurrency)
         self.playwright_instance: Optional[Playwright] = None
         self.browser_context: Optional[BrowserContext] = None
         self.last_request_time: float = 0
