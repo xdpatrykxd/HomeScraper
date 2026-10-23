@@ -3,8 +3,8 @@
 locations: []
 # Postal codes constrain requests server-side and are also checked locally.
 postal_codes: ['2640','2610','2100','2600','2018', '2150', '2110', '2160']
-max_price: 170000
-min_surface_m2: 55
+max_price: 180000
+min_surface_m2: 50
 min_bedrooms: 1
 # Immoweb classifies studios as apartments. Keep these supported top-level types.
 # min_bedrooms: 1 still excludes studios explicitly reporting zero bedrooms.
