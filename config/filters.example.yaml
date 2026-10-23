@@ -1,0 +1,152 @@
+# Complete filter reference. Edit filters.yaml to apply your choices.
+# Every filter is disabled here. null / [] / false means not enabled.
+# Unknown values pass except require_any, which needs a confirmed true.
+locations: []
+postal_codes: []
+property_types: []
+epc_allowed: []
+min_price: null
+max_price: null
+min_surface_m2: null
+max_surface_m2: null
+min_price_per_m2: null
+max_price_per_m2: null
+min_bedrooms: null
+max_bedrooms: null
+min_bathrooms: null
+max_bathrooms: null
+min_toilets: null
+max_toilets: null
+min_shower_rooms: null
+max_shower_rooms: null
+min_floor: null
+max_floor: null
+min_building_floors: null
+max_building_floors: null
+min_construction_year: null
+max_construction_year: null
+min_facades: null
+max_facades: null
+min_monthly_common_costs: null
+max_monthly_common_costs: null
+min_epc_value: null
+max_epc_value: null
+min_terrace_m2: null
+max_terrace_m2: null
+min_garden_m2: null
+max_garden_m2: null
+min_land_m2: null
+max_land_m2: null
+min_living_room_m2: null
+max_living_room_m2: null
+min_kitchen_m2: null
+max_kitchen_m2: null
+min_indoor_parking_spaces: null
+max_indoor_parking_spaces: null
+min_outdoor_parking_spaces: null
+max_outdoor_parking_spaces: null
+min_closed_garage_boxes: null
+max_closed_garage_boxes: null
+min_habitable_units: null
+max_habitable_units: null
+property_subtype_allowed: []
+building_condition_allowed: []
+heating_type_allowed: []
+kitchen_type_allowed: []
+garden_orientation_allowed: []
+terrace_orientation_allowed: []
+flood_zone_allowed: []
+flood_p_score_allowed: []
+flood_g_score_allowed: []
+province_allowed: []
+district_allowed: []
+region_allowed: []
+require_any: []
+required:
+  terrace: false
+  garden: false
+  garage: false
+  parking: false
+  lift: false
+  balcony: false
+  disabled_access: false
+  basement: false
+  attic: false
+  laundry_room: false
+  dressing_room: false
+  air_conditioning: false
+  double_glazing: false
+  heat_pump: false
+  solar_panels: false
+  solar_thermal_panels: false
+  collective_water_heater: false
+  swimming_pool: false
+  sauna: false
+  jacuzzi: false
+  fireplace: false
+  alarm: false
+  armored_door: false
+  door_phone: false
+  video_phone: false
+  concierge: false
+  syndicator: false
+  heritage_protected: false
+  first_occupation: false
+  electrical_compliance_certificate: false
+  asbestos_certificate: false
+  separate_electricity_meter: false
+  separate_gas_meter: false
+  separate_water_meter: false
+  construction_permit: false
+  planning_violation: false
+  priority_purchase_right: false
+  investment_property: false
+  life_annuity: false
+  new_build: false
+forbidden:
+  terrace: false
+  garden: false
+  garage: false
+  parking: false
+  lift: false
+  balcony: false
+  disabled_access: false
+  basement: false
+  attic: false
+  laundry_room: false
+  dressing_room: false
+  air_conditioning: false
+  double_glazing: false
+  heat_pump: false
+  solar_panels: false
+  solar_thermal_panels: false
+  collective_water_heater: false
+  swimming_pool: false
+  sauna: false
+  jacuzzi: false
+  fireplace: false
+  alarm: false
+  armored_door: false
+  door_phone: false
+  video_phone: false
+  concierge: false
+  syndicator: false
+  heritage_protected: false
+  first_occupation: false
+  electrical_compliance_certificate: false
+  asbestos_certificate: false
+  separate_electricity_meter: false
+  separate_gas_meter: false
+  separate_water_meter: false
+  construction_permit: false
+  planning_violation: false
+  priority_purchase_right: false
+  investment_property: false
+  life_annuity: false
+  new_build: false
+include_keywords: []
+exclude_keywords: []
+sources:
+  immoweb: true
+  zimmo: false
+  realo: false

@@ -1,0 +1,40 @@
+services:
+  whatsapp-gateway:
+    image: ${WAHA_IMAGE:-devlikeapro/waha:noweb}
+    restart: unless-stopped
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY:?Run python3 scripts/setup_env.py to generate WAHA_API_KEY}
+      WHATSAPP_DEFAULT_ENGINE: ${WHATSAPP_GATEWAY_ENGINE:-GOWS}
+      WHATSAPP_RESTART_ALL_SESSIONS: 'true'
+      WAHA_DASHBOARD_ENABLED: 'false'
+      WHATSAPP_SWAGGER_ENABLED: 'false'
+      WAHA_PRINT_QR: 'false'
+      WHATSAPP_DOWNLOAD_MEDIA: 'false'
+    ports:
+      - '127.0.0.1:${WHATSAPP_GATEWAY_PORT:-3010}:3000'
+    volumes:
+      - ./data/whatsapp-sessions:/app/.sessions
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+  watcher:
+    build: .
+    env_file: .env
+    environment:
+      WHATSAPP_GATEWAY_URL: http://whatsapp-gateway:3000
+    depends_on:
+      whatsapp-gateway:
+        condition: service_started
+    restart: unless-stopped
+    init: true
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'

@@ -1,0 +1,34 @@
+# Optional criteria: unknown values pass, except require_any needs a confirmed true.
+# Use the postcode list as the search area; do not restrict it to the old town list.
+locations: []
+# Postal codes constrain requests server-side and are also checked locally.
+postal_codes: ['2640','2610','2100','2600','2018', '2150', '2110', '2160']
+max_price: 170000
+min_surface_m2: 55
+min_bedrooms: 1
+# Immoweb classifies studios as apartments. Keep these supported top-level types.
+# min_bedrooms: 1 still excludes studios explicitly reporting zero bedrooms.
+property_types: [apartment, house]
+epc_allowed: [A, B, C, D]
+# At least one of these features must be confirmed present.
+require_any: [terrace, garden]
+required:
+  terrace: false
+  garden: false
+  garage: false
+  parking: false
+  lift: false
+exclude_keywords:
+  - lijfrente
+  - life annuity
+sources:
+  immoweb: true
+  zimmo: false
+  realo: false
+
+# Exclude taller buildings; missing building floor counts do not fail this limit.
+max_building_floors: 4
+
+# Exclude confirmed lifts; unknown lift status is allowed.
+forbidden:
+  lift: true
