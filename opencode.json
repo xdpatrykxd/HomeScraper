@@ -1,0 +1,56 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "ollama/qwen3-coder:30b",
+  "permissions": [
+    {
+      "action": "external_directory",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": "*",
+      "effect": "allow"
+    },
+    {
+      "action": "read",
+      "resource": "*.env",
+      "effect": "deny"
+    },
+    {
+      "action": "edit",
+      "resource": "*",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "*",
+      "effect": "ask"
+    },
+    {
+      "action": "shell",
+      "resource": "python -m pytest *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "git status *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "git diff *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "git push *",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "docker *",
+      "effect": "deny"
+    }
+  ]
+}

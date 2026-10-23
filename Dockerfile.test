@@ -1,0 +1,5 @@
+FROM homescraper-test
+
+RUN pip install --no-cache-dir pytest
+
+CMD ["python", "-m", "pytest", "-q"]

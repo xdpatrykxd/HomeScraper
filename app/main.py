@@ -13,9 +13,12 @@ from app.notifier import Notifier, RejectedSend, AmbiguousSend, MessageError, wh
 from app.scrapers.immoweb import ImmowebScraper
 from app.scrapers.zimmo import ZimmoScraper
 from app.scrapers.realo import RealoScraper
+from app.scrapers.immovlan import ImmovlanScraper
+from app.scrapers.immoscoop import ImmoscoopScraper
+from app.scrapers.immomarkt import ImmomarktScraper
 
 log = logging.getLogger(__name__)
-SCRAPERS = {'immoweb': ImmowebScraper, 'zimmo': ZimmoScraper, 'realo': RealoScraper}
+SCRAPERS = {'immoweb': ImmowebScraper, 'zimmo': ZimmoScraper, 'realo': RealoScraper, 'immovlan': ImmovlanScraper, 'immoscoop': ImmoscoopScraper, 'immomarkt': ImmomarktScraper}
 
 
 async def scan(settings, client, db, dry_run):
