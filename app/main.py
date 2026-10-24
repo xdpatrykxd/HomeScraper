@@ -108,6 +108,14 @@ def serve_ingest(settings, client, db, loop):
                 return self.respond(503, {'error': 'delivery failed'})
             return self.respond(200, {'accepted': True, 'matched': True, 'id': p.id})
 
+        def do_GET(self):
+            if self.path != '/api/browser-config':
+                return self.respond(404, {'error': 'not found'})
+            if not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + settings.ingest_token):
+                return self.respond(401, {'error': 'unauthorized'})
+            config = settings.filters()
+            return self.respond(200, config.model_dump())
+
     server = ThreadingHTTPServer((settings.ingest_host, settings.ingest_port), Handler)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, name='listing-ingest', daemon=True).start()

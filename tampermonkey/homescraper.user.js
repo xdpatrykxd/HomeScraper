@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HomeScraper property sender
 // @namespace    local.homescraper
-// @version      3.3.0
+// @version      3.4.0
 // @description  Send listings from supported Belgian property sites to HomeScraper
 // @match        https://*.immoweb.be/*
 // @match        https://immoweb.be/*
@@ -31,6 +31,7 @@
   'use strict';
 
   const API_URL = 'http://127.0.0.1:8787/api/listings';
+  const CONFIG_URL = 'http://127.0.0.1:8787/api/browser-config';
   const API_TOKEN = 'NBBDYOGZ_Y3KYhU9lFuC6z2JZIdB9U3VjP0dF6vp2l0';
   const DOMAINS = {
     'immoweb.be': 'immoweb', 'zimmo.be': 'zimmo', 'realo.be': 'realo',
@@ -87,7 +88,7 @@
     if (source === 'immoweb') {
       if (!/^\/(?:en|nl)\/classified\/[^/]+\/(?:for-sale|for-rent|te-koop|te-huur)\/[^/]+\/\d{4}\/\d{6,}\/?$/i.test(parsedUrl.pathname)) return null;
       url = dutchImmowebUrl(url, baseUrl);
-    } else if (!/\/(?:classified|property|detail|immo|woning|bien|annonce)\//i.test(parsedUrl.pathname)) return null;
+    } else if (!/\/(?:classified|property|detail|immo|woning|bien|annonce|vastgoed)\//i.test(parsedUrl.pathname)) return null;
     const id = pathId(url);
     if (!id || id.length < 4) return null;
     const card = anchor.closest('article, li, [data-testid], [class*="card"], [class*="Card"], [class*="result"], [class*="Result"]') ?? anchor.parentElement;
@@ -289,14 +290,69 @@
     return null;
   }
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-  const FLOW_KEY = `homescraper.visible-flow.${source}`;
+  const FLOW_PREFIX = 'HOMESCRAPER_VISIBLE_FLOW:';
+  const FLOW_STORAGE_KEY = 'homescraper.visible-flow';
   function readFlow() {
-    try { return JSON.parse(sessionStorage.getItem(FLOW_KEY) || 'null'); } catch (_) { return null; }
+    try {
+      const url = new URL(location.href), encoded = url.searchParams.get('__hsf');
+      if (encoded) {
+        const flow = JSON.parse(decodeURIComponent(escape(atob(encoded))));
+        url.searchParams.delete('__hsf'); history.replaceState(null, '', url.href);
+        return flow;
+      }
+      if (window.name.startsWith(FLOW_PREFIX)) return JSON.parse(window.name.slice(FLOW_PREFIX.length));
+      const stored = sessionStorage.getItem(FLOW_STORAGE_KEY);
+      return stored ? JSON.parse(stored) : null;
+    } catch (_) { return null; }
   }
-  function saveFlow(flow) { sessionStorage.setItem(FLOW_KEY, JSON.stringify(flow)); }
-  function clearFlow() { sessionStorage.removeItem(FLOW_KEY); }
+  function saveFlow(flow) { const value = JSON.stringify(flow); window.name = FLOW_PREFIX + value; sessionStorage.setItem(FLOW_STORAGE_KEY, value); }
+  function clearFlow() { if (window.name.startsWith(FLOW_PREFIX)) window.name = ''; sessionStorage.removeItem(FLOW_STORAGE_KEY); }
+  function flowLink(url, flow) {
+    const target = new URL(url);
+    target.searchParams.set('__hsf', btoa(unescape(encodeURIComponent(JSON.stringify(flow)))));
+    return target.href;
+  }
+  async function browserConfig() {
+    const response = await request('GET', CONFIG_URL, { headers: { Authorization: `Bearer ${API_TOKEN}` } });
+    return JSON.parse(response.responseText);
+  }
+  function filteredSearchUrl(site, config) {
+    const hosts = { immoweb: 'www.immoweb.be', zimmo: 'www.zimmo.be', realo: 'www.realo.be', immovlan: 'www.immovlan.be', immoscoop: 'www.immoscoop.be', immomarkt: 'www.immomarkt.be' };
+    const paths = { immoweb: '/nl/zoeken/huis-en-appartement/te-koop', zimmo: '/nl/zoek/te-koop', realo: '/nl/search/te-koop', immovlan: '/nl/vastgoed/te-koop', immoscoop: '/en/search/for-sale', immomarkt: '/nl/zoeken/huis-en-appartement/te-koop' };
+    const url = new URL(paths[site], `https://${hosts[site]}`);
+    const params = url.searchParams;
+    params.set('countries', 'BE');
+    if (config.postal_codes?.length) params.set('postalCodes', config.postal_codes.join(','));
+    if (config.min_price != null) params.set('minPrice', String(config.min_price));
+    if (config.max_price != null) params.set('maxPrice', String(config.max_price));
+    if (config.min_surface_m2 != null) params.set('minSurface', String(config.min_surface_m2));
+    if (config.min_bedrooms != null) params.set('minBedroomCount', String(config.min_bedrooms));
+    if (config.property_types?.length) params.set('propertyTypes', config.property_types.join(','));
+    params.set('orderBy', 'newest'); params.set('page', '1');
+    return url.href;
+  }
   async function crawl() {
     let flow = readFlow();
+    if (!flow) {
+      try {
+        const config = await browserConfig();
+        const sites = Object.keys(DOMAINS).map(host => DOMAINS[host]).filter(site => config.sources?.[site]);
+        if (!sites.length) return console.warn('[HomeScraper] No enabled source in filters.yaml.');
+        flow = { mode: 'results', sites, siteIndex: 0, config };
+        saveFlow(flow);
+        location.assign(flowLink(filteredSearchUrl(sites[0], config), flow));
+        return;
+      } catch (error) {
+        console.error('[HomeScraper] Could not load watcher filters', error);
+        return;
+      }
+    }
+    if (flow.sites?.[flow.siteIndex] !== source) {
+      const nextSite = flow.sites?.[flow.siteIndex];
+      if (!nextSite) { clearFlow(); console.info('[HomeScraper] Finished all enabled sources.'); return; }
+      location.assign(flowLink(filteredSearchUrl(nextSite, flow.config), flow));
+      return;
+    }
     if (flow?.mode === 'detail') {
       const listing = flow.queue[flow.index];
       if (listing && new URL(location.href).pathname.endsWith(new URL(listing.url).pathname)) {
@@ -315,8 +371,9 @@
       }
       return;
     }
-    if (flow?.mode === 'results' && flow.pageUrl === location.href) {
+    if (flow?.mode === 'results' && (flow.pageUrl === location.href || flow.pageUrl == null)) {
       // Returning to results after detail visits; collect the next result batch.
+      flow.pageUrl = location.href;
     } else {
       flow = { mode: 'results', pageUrl: location.href, seen: [], pages: 0 };
     }
@@ -344,8 +401,15 @@
       location.assign(next);
       return;
     }
-    clearFlow();
-    console.info(`[HomeScraper] ${source}: finished visible results; ${flow.seen.length} listing(s) visited.`);
+    flow.siteIndex += 1;
+    flow.mode = 'results'; flow.pageUrl = null; flow.resultsUrl = null; flow.seen = []; flow.pages = 0;
+    if (flow.siteIndex < flow.sites.length) {
+      saveFlow(flow);
+      location.assign(flowLink(filteredSearchUrl(flow.sites[flow.siteIndex], flow.config), flow));
+    } else {
+      clearFlow();
+      console.info('[HomeScraper] Finished all enabled sources.');
+    }
   }
   async function postListing(listing) {
     try {
