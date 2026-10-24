@@ -21,6 +21,6 @@ Run HomeScraper with `python -m app.main`. The API listens on `http://127.0.0.1:
 1. Open Tampermonkey and choose **Create a new script**.
 2. Copy the contents of `homescraper.user.js` into the editor and save.
 3. Replace `REPLACE_WITH_INGEST_API_TOKEN` with the same token from `.env`.
-4. Open a search results page on any supported property site.
+4. Open a search results page on any supported property site. The script follows the site's next-page links and processes all pages in that search, up to 100 pages.
 
-The script uses `GM_xmlhttpRequest` to post to the local API across browser origins. The API binds to loopback by default. Do not expose it publicly or share a userscript containing your token. Listing page structures differ and can change; missing fields remain unknown and may cause the configured filters to reject a listing.
+The script uses `GM_xmlhttpRequest` to fetch result/detail pages and post to the local API across browser origins. It deduplicates listings across pages and sends them in small batches. The API binds to loopback by default. Do not expose it publicly or share a userscript containing your token. Listing page structures differ and can change; missing fields remain unknown and may cause the configured filters to reject a listing.

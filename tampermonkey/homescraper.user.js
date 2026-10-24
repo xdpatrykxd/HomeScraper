@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HomeScraper property sender
 // @namespace    local.homescraper
-// @version      2.0.0
+// @version      3.0.0
 // @description  Send listings from supported Belgian property sites to HomeScraper
 // @match        https://*.immoweb.be/*
 // @match        https://immoweb.be/*
@@ -54,15 +54,15 @@
     if (/^(page|zoeken|search|te-koop|for-sale|appartement|huis|woning)$/i.test(last)) return '';
     return (last.match(/\d{4,}|[A-Z]{2,}\d{2,}/i) ?? [last])[0];
   }
-  function listingUrl(raw) {
+  function listingUrl(raw, baseUrl = location.href) {
     try {
-      const url = new URL(raw, location.href);
+      const url = new URL(raw, baseUrl);
       if (url.protocol !== 'https:' || !Object.keys(DOMAINS).some(d => url.hostname === d || url.hostname.endsWith(`.${d}`))) return null;
       return url.href;
     } catch (_) { return null; }
   }
-  function parseCard(anchor) {
-    const url = listingUrl(anchor.href);
+  function parseCard(anchor, baseUrl) {
+    const url = listingUrl(anchor.getAttribute('href') || anchor.href, baseUrl);
     if (!url) return null;
     const id = pathId(url);
     if (!id || id.length < 4) return null;
@@ -125,26 +125,99 @@
       image_url: first(Array.isArray(ld.image) ? ld.image[0] : ld.image, listing.image_url),
     };
   }
-  function send(listing) {
-    GM_xmlhttpRequest({
-      method: 'POST', url: API_URL,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_TOKEN}` },
-      data: JSON.stringify({ listing }),
-      onload: response => console.info('[HomeScraper]', source, listing.source_listing_id, response.status, response.responseText),
-      onerror: error => console.error('[HomeScraper] API request failed', error),
-    });
+  function request(method, url, options = {}) {
+    return new Promise((resolve, reject) => GM_xmlhttpRequest({
+      method, url, timeout: 30000, ...options,
+      onload: response => response.status >= 200 && response.status < 300 ? resolve(response) : reject(new Error(`HTTP ${response.status}`)),
+      onerror: reject, ontimeout: () => reject(new Error('request timed out')),
+    }));
   }
-
-  const found = new Map();
-  for (const anchor of document.querySelectorAll('a[href]')) {
-    const listing = parseCard(anchor);
-    if (listing && !found.has(listing.source_listing_id)) found.set(listing.source_listing_id, listing);
+  function pageListings(doc, pageUrl) {
+    const found = new Map();
+    for (const anchor of doc.querySelectorAll('a[href]')) {
+      const listing = parseCard(anchor, pageUrl);
+      if (listing && !found.has(listing.source_listing_id)) found.set(listing.source_listing_id, listing);
+    }
+    return [...found.values()];
   }
-  const listings = [...found.values()];
-  listings.forEach((listing, index) => setTimeout(() => GM_xmlhttpRequest({
-    method: 'GET', url: listing.url,
-    onload: response => send(detailData(response.responseText, listing)),
-    onerror: () => send(listing),
-  }), index * 900));
-  console.info(`[HomeScraper] Found ${listings.length} ${source} listings on this page.`);
+  function nextPage(doc, currentUrl) {
+    const candidates = [...doc.querySelectorAll('a[href]')];
+    const next = candidates.find(a => a.rel?.toLowerCase().split(/\s+/).includes('next') ||
+      /next|volgende|suivant|suivante/i.test(`${a.innerText} ${a.getAttribute('aria-label')} ${a.title}`) ||
+      /^(›|»|→)$/i.test((a.innerText || '').trim()));
+    if (next) {
+      const url = listingUrl(next.getAttribute('href'), currentUrl);
+      if (url && url !== currentUrl) return url;
+    }
+    const current = new URL(currentUrl);
+    const currentPage = Number(current.searchParams.get('page') || current.searchParams.get('pagina') || current.searchParams.get('p'));
+    if (Number.isInteger(currentPage) && currentPage > 0) {
+      const numbered = candidates.find(a => (a.innerText || '').trim() === String(currentPage + 1));
+      if (numbered) {
+        const url = listingUrl(numbered.getAttribute('href'), currentUrl);
+        if (url && url !== currentUrl) return url;
+      }
+      const pageKey = ['page', 'pagina', 'p'].find(key => current.searchParams.has(key));
+      if (pageKey && doc.querySelector('a[rel="next"], [class*="pagination"], [class*="Pagination"]')) {
+        current.searchParams.set(pageKey, String(currentPage + 1));
+        return current.href;
+      }
+    }
+    return null;
+  }
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  async function submitListing(listing) {
+    try {
+      const response = await request('GET', listing.url);
+      listing = detailData(response.responseText, listing);
+    } catch (error) {
+      console.warn('[HomeScraper] Detail fetch failed; submitting card fields', listing.source_listing_id, error);
+    }
+    try {
+      const response = await request('POST', API_URL, {
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_TOKEN}` },
+        data: JSON.stringify({ listing }),
+      });
+      console.info('[HomeScraper]', source, listing.source_listing_id, response.status, response.responseText);
+    } catch (error) {
+      console.error('[HomeScraper] API request failed', error);
+    }
+  }
+  async function crawl() {
+    let currentUrl = location.href;
+    const seenPages = new Set();
+    const seenListings = new Set();
+    let pageCount = 0;
+    while (currentUrl && !seenPages.has(currentUrl) && pageCount < 100) {
+      seenPages.add(currentUrl);
+      let doc;
+      if (pageCount === 0) doc = document;
+      else {
+        try {
+          const response = await request('GET', currentUrl);
+          doc = new DOMParser().parseFromString(response.responseText, 'text/html');
+        } catch (error) {
+          console.error('[HomeScraper] Could not load results page', currentUrl, error);
+          break;
+        }
+      }
+      const listings = pageListings(doc, currentUrl).filter(item => !seenListings.has(item.source_listing_id));
+      listings.forEach(item => seenListings.add(item.source_listing_id));
+      console.info(`[HomeScraper] ${source}: page ${pageCount + 1}, ${listings.length} new listings`);
+      for (let start = 0; start < listings.length; start += 3) {
+        await Promise.all(listings.slice(start, start + 3).map(async (listing, index) => {
+          await delay(index * 350);
+          await submitListing(listing);
+        }));
+        await delay(500);
+      }
+      const next = nextPage(doc, currentUrl);
+      if (!next || seenPages.has(next)) break;
+      currentUrl = next;
+      pageCount += 1;
+      await delay(700);
+    }
+    console.info(`[HomeScraper] ${source}: finished ${pageCount + 1} page(s), ${seenListings.size} listing(s).`);
+  }
+  crawl().catch(error => console.error('[HomeScraper] Crawl failed', error));
 })();
