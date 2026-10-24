@@ -88,7 +88,7 @@
     if (source === 'immoweb') {
       if (!/^\/(?:en|nl)\/classified\/[^/]+\/(?:for-sale|for-rent|te-koop|te-huur)\/[^/]+\/\d{4}\/\d{6,}\/?$/i.test(parsedUrl.pathname)) return null;
       url = dutchImmowebUrl(url, baseUrl);
-    } else if (!/\/(?:classified|property|detail|immo|woning|bien|annonce|vastgoed)\//i.test(parsedUrl.pathname)) return null;
+    } else if (!/\/(?:classified|property|detail|immo|woning|bien|annonce|vastgoed|pand)\//i.test(parsedUrl.pathname)) return null;
     const id = pathId(url);
     if (!id || id.length < 4) return null;
     const card = anchor.closest('article, li, [data-testid], [class*="card"], [class*="Card"], [class*="result"], [class*="Result"]') ?? anchor.parentElement;
@@ -318,17 +318,29 @@
   }
   function filteredSearchUrl(site, config) {
     const hosts = { immoweb: 'www.immoweb.be', zimmo: 'www.zimmo.be', realo: 'www.realo.be', immovlan: 'www.immovlan.be', immoscoop: 'www.immoscoop.be', immomarkt: 'www.immomarkt.be' };
-    const paths = { immoweb: '/nl/zoeken/huis-en-appartement/te-koop', zimmo: '/nl/zoek/te-koop', realo: '/nl/search/te-koop', immovlan: '/nl/vastgoed/te-koop', immoscoop: '/en/search/for-sale', immomarkt: '/nl/zoeken/huis-en-appartement/te-koop' };
+    const paths = { immoweb: '/nl/zoeken/huis-en-appartement/te-koop', zimmo: '/nl/zoek/te-koop', realo: '/nl/search/te-koop', immovlan: '/nl/vastgoed/huis', immoscoop: '/zoeken/query', immomarkt: '/nl/zoeken/huis-en-appartement/te-koop' };
     const url = new URL(paths[site], `https://${hosts[site]}`);
     const params = url.searchParams;
-    params.set('countries', 'BE');
-    if (config.postal_codes?.length) params.set('postalCodes', config.postal_codes.join(','));
-    if (config.min_price != null) params.set('minPrice', String(config.min_price));
-    if (config.max_price != null) params.set('maxPrice', String(config.max_price));
-    if (config.min_surface_m2 != null) params.set('minSurface', String(config.min_surface_m2));
-    if (config.min_bedrooms != null) params.set('minBedroomCount', String(config.min_bedrooms));
-    if (config.property_types?.length) params.set('propertyTypes', config.property_types.join(','));
-    params.set('orderBy', 'newest'); params.set('page', '1');
+    if (site === 'immoweb' || site === 'realo' || site === 'immomarkt') {
+      if (config.postal_codes?.length) params.set('postalCodes', config.postal_codes.join(','));
+      if (config.min_price != null) params.set('minPrice', String(config.min_price));
+      if (config.max_price != null) params.set('maxPrice', String(config.max_price));
+      if (config.min_surface_m2 != null) params.set('minSurface', String(config.min_surface_m2));
+      if (config.min_bedrooms != null) params.set('minBedroomCount', String(config.min_bedrooms));
+      if (config.property_types?.length) params.set('propertyTypes', config.property_types.join(','));
+      params.set('orderBy', 'newest'); params.set('page', '1');
+    } else if (site === 'immovlan') {
+      params.set('transactiontypes', 'te-koop,in-openbare-verkoop');
+      if (config.property_types?.length === 1 && config.property_types[0] === 'apartment') url.pathname = '/nl/vastgoed/appartement';
+    } else if (site === 'immoscoop') {
+      params.set('offerType', 'te-koop');
+      params.set('drawOnMap', '1');
+    } else if (site === 'zimmo') {
+      // These are the Dutch property-type routes exposed by Zimmo's search UI.
+      if (config.property_types?.length === 1) {
+        url.pathname += config.property_types[0] === 'apartment' ? '/appartement' : '/huis';
+      }
+    }
     return url.href;
   }
   async function crawl() {
