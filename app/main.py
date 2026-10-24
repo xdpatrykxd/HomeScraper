@@ -94,18 +94,26 @@ def serve_ingest(settings, client, db, loop):
                 return self.respond(400, {'error': str(exc)})
             missing = ingest_missing_fields(p, config)
             if not config.sources.get(source, False):
+                log.info('[INGEST] Ignored %s %s: source disabled in filters', source, p.source_listing_id)
                 return self.respond(200, {'accepted': True, 'matched': False, 'reason': 'source disabled in filters'})
             if missing:
+                log.info('[INGEST] Ignored %s %s: required detail fields missing: %s', source, p.source_listing_id, ', '.join(missing))
                 return self.respond(200, {'accepted': True, 'matched': False, 'missing': missing})
             if p.price is not None and p.price < 10000:
+                log.info('[INGEST] Ignored %s %s: price below residential sanity floor (€%s)', source, p.source_listing_id, p.price)
                 return self.respond(200, {'accepted': True, 'matched': False, 'reason': 'price below residential sanity floor'})
             if not matches(p, config):
+                log.info('[INGEST] Filtered %s %s: title=%r price=%s surface=%s bedrooms=%s postal_code=%s type=%s',
+                         source, p.source_listing_id, p.title, p.price, p.surface_m2, p.bedrooms, p.postal_code, p.property_type)
                 return self.respond(200, {'accepted': True, 'matched': False})
+            log.info('[INGEST] Matched %s %s: %s | €%s | %sm² | %s bedrooms | %s %s; delivering',
+                     source, p.source_listing_id, p.title, p.price, p.surface_m2, p.bedrooms, p.postal_code, p.city)
             try:
                 asyncio.run_coroutine_threadsafe(deliver(settings, client, db, p), loop).result()
             except Exception as exc:
-                log.error('[INGEST] Delivery failed: %s', exc)
+                log.error('[INGEST] Delivery failed for %s %s: %s', source, p.source_listing_id, exc)
                 return self.respond(503, {'error': 'delivery failed'})
+            log.info('[INGEST] Completed %s %s', source, p.source_listing_id)
             return self.respond(200, {'accepted': True, 'matched': True, 'id': p.id})
 
         def do_GET(self):
