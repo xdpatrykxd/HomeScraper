@@ -23,11 +23,11 @@ exclude_keywords:
   - life annuity
 sources:
   immoweb: true
-  zimmo: false
-  realo: false
-  immovlan: false
-  immoscoop: false
-  immomarkt: false
+  zimmo: true
+  realo: true
+  immovlan: true
+  immoscoop: true
+  immomarkt: true
 
 # Exclude taller buildings; missing building floor counts do not fail this limit.
 max_building_floors: 4
