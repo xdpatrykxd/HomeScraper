@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HomeScraper property sender
 // @namespace    local.homescraper
-// @version      3.5.0
+// @version      3.6.0
 // @description  Send listings from supported Belgian property sites to HomeScraper
 // @match        https://*.immoweb.be/*
 // @match        https://immoweb.be/*
