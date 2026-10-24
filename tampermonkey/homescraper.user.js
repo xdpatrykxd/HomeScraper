@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HomeScraper property sender
 // @namespace    local.homescraper
-// @version      3.0.0
+// @version      3.1.0
 // @description  Send listings from supported Belgian property sites to HomeScraper
 // @match        https://*.immoweb.be/*
 // @match        https://immoweb.be/*
@@ -78,6 +78,8 @@
   function parseCard(anchor, baseUrl) {
     const url = listingUrl(anchor.getAttribute('href') || anchor.href, baseUrl);
     if (!url) return null;
+    const parsedUrl = new URL(url);
+    if (source === 'immoweb' && !/^\/en\/classified\/[^/]+\/(?:for-sale|for-rent)\/[^/]+\/\d{4}\/\d{6,}\/?$/i.test(parsedUrl.pathname)) return null;
     const id = pathId(url);
     if (!id || id.length < 4) return null;
     const card = anchor.closest('article, li, [data-testid], [class*="card"], [class*="Card"], [class*="result"], [class*="Result"]') ?? anchor.parentElement;
@@ -278,12 +280,37 @@
     return null;
   }
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  function loadRenderedPage(url, timeoutMs = 20000) {
+    return new Promise((resolve, reject) => {
+      const frame = document.createElement('iframe');
+      frame.style.cssText = 'position:fixed;width:1px;height:1px;left:-10000px;top:0;opacity:0;pointer-events:none';
+      let settled = false;
+      const finish = (error, doc) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        frame.remove();
+        error ? reject(error) : resolve(doc);
+      };
+      const timer = setTimeout(() => finish(new Error('Rendered page load timed out')), timeoutMs);
+      frame.onload = () => {
+        try {
+          const doc = frame.contentDocument;
+          if (!doc?.body) return finish(new Error('Rendered page has no body'));
+          finish(null, doc);
+        } catch (error) { finish(error); }
+      };
+      frame.onerror = () => finish(new Error('Rendered page failed to load'));
+      frame.src = url;
+      document.body.appendChild(frame);
+    });
+  }
   async function submitListing(listing) {
     try {
-      const response = await request('GET', listing.url);
-      listing = detailData(response.responseText, listing);
+      const doc = await loadRenderedPage(listing.url);
+      listing = source === 'immoweb' ? immowebVisibleData(doc, listing) : detailData(doc.documentElement.outerHTML, listing);
     } catch (error) {
-      console.warn('[HomeScraper] Detail fetch failed; submitting card fields', listing.source_listing_id, error);
+      console.warn('[HomeScraper] Rendered detail page failed; submitting card fields', listing.source_listing_id, error);
     }
     try {
       const response = await request('POST', API_URL, {
@@ -306,10 +333,9 @@
       if (pageCount === 0) doc = document;
       else {
         try {
-          const response = await request('GET', currentUrl);
-          doc = new DOMParser().parseFromString(response.responseText, 'text/html');
+          doc = await loadRenderedPage(currentUrl);
         } catch (error) {
-          console.error('[HomeScraper] Could not load results page', currentUrl, error);
+          console.error('[HomeScraper] Could not render results page', currentUrl, error);
           break;
         }
       }
