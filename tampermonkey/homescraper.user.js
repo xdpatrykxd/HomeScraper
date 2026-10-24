@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HomeScraper property sender
 // @namespace    local.homescraper
-// @version      3.4.0
+// @version      3.5.0
 // @description  Send listings from supported Belgian property sites to HomeScraper
 // @match        https://*.immoweb.be/*
 // @match        https://immoweb.be/*
@@ -58,7 +58,7 @@
   }
   function titleOrNull(value) {
     const title = typeof value === 'string' ? value.trim() : '';
-    return title && !/^(?:apartment|appartement|house|huis|woning|maison)\s+(?:for sale|te koop|à vendre)$/i.test(title) ? title : null;
+    return title && !/^(?:apartment|appartement|house|huis|woning|maison|flat|flat studio|ground floor|duplex|villa|penthouse|studio)(?:\s+(?:for sale|te koop|à vendre))?$/i.test(title) ? title : null;
   }
   function pathId(url) {
     const parts = new URL(url).pathname.split('/').filter(Boolean);
@@ -83,11 +83,11 @@
     if (!url) return null;
     const parsedUrl = new URL(url);
     if (source === 'immoweb') {
-      if (!/^\/(?:en|nl)\/classified\/[^/]+\/(?:for-sale|for-rent|te-koop|te-huur)\/[^/]+\/\d{4}\/\d{6,}\/?$/i.test(parsedUrl.pathname)) return null;
+      if (!/^\/(?:en|nl)\/(?:classified|zoekertje)\/[^/]+\/(?:for-sale|for-rent|te-koop|te-huur)\/[^/]+\/\d{4}\/\d{6,}\/?$/i.test(parsedUrl.pathname)) return null;
       url = dutchImmowebUrl(url, baseUrl);
-    } else if (!/\/(?:classified|property|detail|immo|woning|bien|annonce|vastgoed|pand)\//i.test(parsedUrl.pathname)) return null;
+    }
     const id = pathId(url);
-    if (!id || id.length < 4) return null;
+    if (!id || id.length < 5) return null;
     const card = anchor.closest('article, li, [data-testid], [class*="card"], [class*="Card"], [class*="result"], [class*="Result"]') ?? anchor.parentElement;
     const text = (card?.innerText ?? anchor.innerText ?? '').replace(/\s+/g, ' ').trim();
     if (!text || text.length < 8 || (!priceFromText(text) && !/\d+\s*(?:slaapkamers?|chambres?|bedrooms?)/i.test(text))) return null;
@@ -95,7 +95,7 @@
     const bedsMatch = text.match(/(\d+)\s*(?:slaapkamers?|chambres?|bedrooms?)/i);
     const postMatch = text.match(/\b([1-9]\d{3})\b/);
     const image = card?.querySelector('img')?.src ?? null;
-    const kindText = `${anchor.innerText} ${text}`.toLowerCase();
+    const kindText = `${anchor.innerText} ${text} ${parsedUrl.pathname}`.toLowerCase();
     const propertyType = /huis|house|maison|villa/.test(kindText) ? 'house' : /appartement|apartment|appart/.test(kindText) ? 'apartment' : null;
     return {
       source, source_listing_id: id, url,
@@ -313,41 +313,41 @@
     const response = await request('GET', CONFIG_URL, { headers: { Authorization: `Bearer ${API_TOKEN}` } });
     return JSON.parse(response.responseText);
   }
-  function filteredSearchUrl(site, config) {
+  function filteredSearchUrls(site, config) {
     const hosts = { immoweb: 'www.immoweb.be', zimmo: 'www.zimmo.be', realo: 'www.realo.be', immovlan: 'www.immovlan.be', immoscoop: 'www.immoscoop.be' };
-    const paths = { immoweb: '/nl/zoeken/huis-en-appartement/te-koop', zimmo: '/nl/zoek/te-koop', realo: '/nl/search', immovlan: '/nl/vastgoed/huis', immoscoop: '/zoeken/query' };
-    if (site === 'realo' && config.property_types?.length === 1) {
-      paths.realo = `/nl/search/${config.property_types[0] === 'apartment' ? 'appartement' : 'huis'}/te-koop`;
-    }
-    const url = new URL(paths[site], `https://${hosts[site]}`);
-    const params = url.searchParams;
-    if (site === 'immoweb') {
-      if (config.postal_codes?.length) params.set('postalCodes', config.postal_codes.join(','));
-      if (config.min_price != null) params.set('minPrice', String(config.min_price));
-      if (config.max_price != null) params.set('maxPrice', String(config.max_price));
-      if (config.min_surface_m2 != null) params.set('minSurface', String(config.min_surface_m2));
-      if (config.min_bedrooms != null) params.set('minBedroomCount', String(config.min_bedrooms));
-      if (config.property_types?.length) params.set('propertyTypes', config.property_types.join(','));
-      params.set('orderBy', 'newest'); params.set('page', '1');
-    } else if (site === 'immovlan') {
-      params.set('transactiontypes', 'te-koop,in-openbare-verkoop');
-      if (config.property_types?.length === 1 && config.property_types[0] === 'apartment') url.pathname = '/nl/vastgoed/appartement';
-    } else if (site === 'immoscoop') {
-      params.set('offerType', 'te-koop');
-      params.set('drawOnMap', '1');
-    } else if (site === 'realo') {
-      params.set('way', 'SALE');
-      if (config.postal_codes?.length) params.set('q', config.postal_codes.join(' '));
-      if (config.min_price != null) params.set('priceMin', String(config.min_price));
-      if (config.max_price != null) params.set('priceMax', String(config.max_price));
-      if (config.min_bedrooms != null) params.set('bedroomsMin', String(config.min_bedrooms));
-    } else if (site === 'zimmo') {
-      // These are the Dutch property-type routes exposed by Zimmo's search UI.
-      if (config.property_types?.length === 1) {
-        url.pathname += config.property_types[0] === 'apartment' ? '/appartement' : '/huis';
+    const types = config.property_types?.length ? config.property_types : [null];
+    return types.map(type => {
+      const paths = {
+        immoweb: `/nl/zoeken/${type === 'apartment' ? 'appartement' : type === 'house' ? 'huis' : 'huis-en-appartement'}/te-koop`,
+        zimmo: `/nl/zoek/te-koop${type ? `/${type === 'apartment' ? 'appartement' : 'huis'}` : ''}`,
+        realo: `/nl/search${type ? `/${type === 'apartment' ? 'appartement' : 'huis'}/te-koop` : ''}`,
+        immovlan: `/nl/vastgoed/${type === 'apartment' ? 'appartement' : 'huis'}`,
+        immoscoop: '/zoeken/query',
+      };
+      const url = new URL(paths[site], `https://${hosts[site]}`);
+      const params = url.searchParams;
+      if (site === 'immoweb') {
+        if (config.postal_codes?.length) params.set('postalCodes', config.postal_codes.join(','));
+        if (config.min_price != null) params.set('minPrice', String(config.min_price));
+        if (config.max_price != null) params.set('maxPrice', String(config.max_price));
+        if (config.min_surface_m2 != null) params.set('minSurface', String(config.min_surface_m2));
+        if (config.min_bedrooms != null) params.set('minBedroomCount', String(config.min_bedrooms));
+        params.set('orderBy', 'newest'); params.set('page', '1');
+      } else if (site === 'immovlan') {
+        params.set('transactiontypes', 'te-koop,in-openbare-verkoop');
+      } else if (site === 'immoscoop') {
+        params.set('offerType', 'te-koop');
+        params.set('drawOnMap', '1');
+        if (type) params.set('propertyType', type === 'apartment' ? 'appartement' : 'woonhuis');
+      } else if (site === 'realo') {
+        params.set('way', 'SALE');
+        if (config.postal_codes?.length) params.set('q', config.postal_codes.join(' '));
+        if (config.min_price != null) params.set('priceMin', String(config.min_price));
+        if (config.max_price != null) params.set('priceMax', String(config.max_price));
+        if (config.min_bedrooms != null) params.set('bedroomsMin', String(config.min_bedrooms));
       }
-    }
-    return url.href;
+      return url.href;
+    });
   }
   async function crawl() {
     let flow = readFlow();
@@ -355,20 +355,21 @@
       try {
         const config = await browserConfig();
         const sites = Object.keys(DOMAINS).map(host => DOMAINS[host]).filter(site => config.sources?.[site]);
-        if (!sites.length) return console.warn('[HomeScraper] No enabled source in filters.yaml.');
-        flow = { mode: 'results', sites, siteIndex: 0, config };
+        const searches = sites.flatMap(site => filteredSearchUrls(site, config).map(url => ({ site, url })));
+        if (!searches.length) return console.warn('[HomeScraper] No enabled source in filters.yaml.');
+        flow = { mode: 'results', searches, searchIndex: 0, config };
         saveFlow(flow);
-        location.assign(flowLink(filteredSearchUrl(sites[0], config), flow));
+        location.assign(flowLink(searches[0].url, flow));
         return;
       } catch (error) {
         console.error('[HomeScraper] Could not load watcher filters', error);
         return;
       }
     }
-    if (flow.sites?.[flow.siteIndex] !== source) {
-      const nextSite = flow.sites?.[flow.siteIndex];
-      if (!nextSite) { clearFlow(); console.info('[HomeScraper] Finished all enabled sources.'); return; }
-      location.assign(flowLink(filteredSearchUrl(nextSite, flow.config), flow));
+    const search = flow.searches?.[flow.searchIndex];
+    if (search?.site !== source) {
+      if (!search) { clearFlow(); console.info('[HomeScraper] Finished all enabled sources.'); return; }
+      location.assign(flowLink(search.url, flow));
       return;
     }
     if (flow?.mode === 'detail') {
@@ -395,7 +396,13 @@
     } else {
       flow = { mode: 'results', pageUrl: location.href, seen: [], pages: 0 };
     }
-    if (flow.pages >= 100) { clearFlow(); console.info(`[HomeScraper] ${source}: stopped after 100 pages.`); return; }
+    if (flow.pages >= 100) {
+      flow.searchIndex += 1; flow.pageUrl = null; flow.seen = []; flow.pages = 0;
+      const nextSearch = flow.searches?.[flow.searchIndex];
+      if (nextSearch) { saveFlow(flow); location.assign(flowLink(nextSearch.url, flow)); }
+      else { clearFlow(); console.info('[HomeScraper] Finished all enabled sources and property types.'); }
+      return;
+    }
     await humanScroll();
     const seen = new Set(flow.seen || []);
     const listings = pageListings(document, location.href).filter(item => !seen.has(item.source_listing_id));
@@ -419,14 +426,15 @@
       location.assign(next);
       return;
     }
-    flow.siteIndex += 1;
+    flow.searchIndex += 1;
     flow.mode = 'results'; flow.pageUrl = null; flow.resultsUrl = null; flow.seen = []; flow.pages = 0;
-    if (flow.siteIndex < flow.sites.length) {
+    const nextSearch = flow.searches?.[flow.searchIndex];
+    if (nextSearch) {
       saveFlow(flow);
-      location.assign(flowLink(filteredSearchUrl(flow.sites[flow.siteIndex], flow.config), flow));
+      location.assign(flowLink(nextSearch.url, flow));
     } else {
       clearFlow();
-      console.info('[HomeScraper] Finished all enabled sources.');
+      console.info('[HomeScraper] Finished all enabled sources and property types.');
     }
   }
   async function postListing(listing) {
@@ -440,10 +448,17 @@
   }
   async function humanScroll() {
     const step = Math.max(400, Math.floor(window.innerHeight * 0.72));
-    const end = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
-    for (let y = 0; y < end; y += step) {
+    let y = 0, stablePasses = 0, priorEnd = 0;
+    while (stablePasses < 2) {
+      const end = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+      if (end <= priorEnd) stablePasses += 1;
+      else stablePasses = 0;
+      priorEnd = end;
+      if (y >= end) y = Math.max(0, end - window.innerHeight);
       window.scrollTo({ top: y, behavior: 'smooth' });
       await delay(180 + Math.random() * 180);
+      y += step;
+      if (y > end + step) await delay(500);
     }
     await delay(700);
     window.scrollTo({ top: 0, behavior: 'smooth' });
