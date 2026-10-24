@@ -64,7 +64,8 @@
     const parts = new URL(url).pathname.split('/').filter(Boolean);
     const last = parts.at(-1) ?? '';
     if (/^(page|zoeken|search|te-koop|for-sale|appartement|huis|woning)$/i.test(last)) return '';
-    return (last.match(/\d{4,}|[A-Z]{2,}\d{2,}/i) ?? [last])[0];
+    // Zimmo IDs are short alphanumeric codes (for example LSOGD), not numeric.
+    return (last.match(/\d{4,}|[A-Z]{2,}\d{2,}|[A-Z]{2,}[A-Z0-9]{2,}/i) ?? [last])[0];
   }
   function listingUrl(raw, baseUrl = location.href) {
     try {
@@ -87,12 +88,12 @@
       url = dutchImmowebUrl(url, baseUrl);
     }
     const id = pathId(url);
-    if (!id || id.length < 5) return null;
-    const card = anchor.closest('article, li, [data-testid], [class*="card"], [class*="Card"], [class*="result"], [class*="Result"]') ?? anchor.parentElement;
+    if (!id || id.length < (source === 'zimmo' ? 4 : 5)) return null;
+    const card = anchor.closest('article, li, zimmo-listing, [data-testid], [class*="card"], [class*="Card"], [class*="result"], [class*="Result"]') ?? anchor.parentElement;
     const text = (card?.innerText ?? anchor.innerText ?? '').replace(/\s+/g, ' ').trim();
-    if (!text || text.length < 8 || (!priceFromText(text) && !/\d+\s*(?:slaapkamers?|chambres?|bedrooms?)/i.test(text))) return null;
-    const areaMatch = text.match(/([\d.,]+)\s*m(?:²|2)/i);
-    const bedsMatch = text.match(/(\d+)\s*(?:slaapkamers?|chambres?|bedrooms?)/i);
+    if (!text || text.length < 8 || (!priceFromText(text) && !/\d+\s*(?:slaapkamers?|chambres?|bedrooms?)/i.test(text) && !/LSO[A-Z0-9]{2}/i.test(text))) return null;
+    const areaMatch = text.match(/([\d.,]+)\s*m(?:²|2)/i) ?? text.match(/(?:woonoppervlakte|living area|surface habitable)[^\d]{0,20}([\d.,]+)/i);
+    const bedsMatch = text.match(/(\d+)\s*(?:slaapkamers?|chambres?|bedrooms?)/i) ?? text.match(/(?:aantal slaapkamers is|bedrooms?)[^\d]{0,10}(\d+)/i);
     const postMatch = text.match(/\b([1-9]\d{3})\b/);
     const image = card?.querySelector('img')?.src ?? null;
     const kindText = `${anchor.innerText} ${text} ${parsedUrl.pathname}`.toLowerCase();
@@ -159,6 +160,57 @@
       building_floors: number(tableValue(/^(?:Number of floors|Building floors)$/i)),
     };
   }
+  function zimmoEmbeddedData(doc, listing) {
+    let detail = null;
+    for (const node of doc.querySelectorAll('script[type="application/json"]')) {
+      try {
+        const data = JSON.parse(node.textContent);
+        detail = Object.entries(data).find(([key, value]) =>
+          key.startsWith('LISTING_DETAIL_') && value && typeof value === 'object'
+        )?.[1] ?? detail;
+      } catch (_) { /* unrelated or malformed page state */ }
+      if (detail) break;
+    }
+    const estate = detail?.estate;
+    if (!estate) return null;
+    const locationData = estate.location ?? {};
+    const layout = Array.isArray(estate.layout) ? estate.layout : [];
+    const spaces = type => layout.filter(item => String(item.spaceType ?? '').toUpperCase() === type);
+    const terraceSpaces = spaces('TERRACE');
+    const gardenSpaces = spaces('GARDEN');
+    const certificate = estate.certificate?.epcCertificate ?? {};
+    const mainImage = doc.querySelector('img.main-image, .gallery img, .listing-image img')?.src ?? null;
+    const describedTitle = doc.querySelector('.title-wrapper h1')?.innerText;
+    const pageDescription = doc.querySelector('.description_text')?.innerText;
+    const title = first(estate.title?.nl, titleOrNull(describedTitle), listing.title);
+    const typedBoolean = value => typeof value?.bool === 'boolean' ? value.bool : null;
+    return {
+      ...listing,
+      title: titleOrNull(title),
+      description: first(estate.description?.nl, pageDescription, listing.description),
+      address: [locationData.street, locationData.streetNumber].filter(Boolean).join(' ') || listing.address,
+      postal_code: locationData.postalCode == null ? listing.postal_code : String(locationData.postalCode),
+      city: first(locationData.locality?.nl, listing.city),
+      price: number(estate.price?.value) ?? listing.price,
+      surface_m2: number(estate.floorspaceSurface?.value) ?? listing.surface_m2,
+      bedrooms: spaces('BEDROOM').length || listing.bedrooms,
+      bathrooms: spaces('BATHROOM').length || listing.bathrooms,
+      property_type: /HOUSE|HOME/i.test(String(estate.type)) ? 'house' : /APARTMENT/i.test(String(estate.type)) ? 'apartment' : listing.property_type,
+      epc: first(certificate.energyLabel, listing.epc),
+      epc_value: number(certificate.epcValue?.value) ?? listing.epc_value,
+      terrace: terraceSpaces.length ? true : typedBoolean(estate.terrace) ?? listing.terrace,
+      terrace_m2: terraceSpaces.reduce((sum, item) => sum + (number(item.spaceSurface?.value) ?? 0), 0) || listing.terrace_m2,
+      garden: gardenSpaces.length ? true : typedBoolean(estate.garden) ?? listing.garden,
+      garden_m2: gardenSpaces.reduce((sum, item) => sum + (number(item.spaceSurface?.value) ?? 0), 0) || listing.garden_m2,
+      garage: typedBoolean(estate.garage) ?? listing.garage,
+      lift: typedBoolean(estate.lift) ?? listing.lift,
+      floor: number(estate.floor) ?? listing.floor,
+      building_floors: number(estate.floorsCount) ?? listing.building_floors,
+      construction_year: number(estate.constructionYear) ?? listing.construction_year,
+      facades: number(estate.facadesCount) ?? listing.facades,
+      image_url: first(mainImage, listing.image_url),
+    };
+  }
   function detailData(html, listing) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     if (source === 'immoweb') {
@@ -205,6 +257,10 @@
       }
       const visible = immowebVisibleData(doc, listing);
       if (visible.price !== null || visible.surface_m2 !== null || visible.description) return visible;
+    }
+    if (source === 'zimmo') {
+      const embedded = zimmoEmbeddedData(doc, listing);
+      if (embedded) return embedded;
     }
     const all = [];
     for (const node of doc.querySelectorAll('script[type="application/ld+json"]')) {
@@ -278,7 +334,7 @@
         if (url && url !== currentUrl) return source === 'immoweb' ? dutchImmowebUrl(url, currentUrl) : url;
       }
       const pageKey = ['page', 'pagina', 'p'].find(key => current.searchParams.has(key));
-      if (pageKey && doc.querySelector('a[rel="next"], [class*="pagination"], [class*="Pagination"]')) {
+      if (pageKey && (doc.querySelector('a[rel="next"], [class*="pagination"], [class*="Pagination"]') || source === 'zimmo')) {
         current.pathname = source === 'immoweb' ? current.pathname.replace(/^\/en(?=\/)/i, '/nl') : current.pathname;
         current.searchParams.set(pageKey, String(currentPage + 1));
         return current.href;
