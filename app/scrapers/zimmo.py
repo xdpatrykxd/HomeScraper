@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import math
 import re
@@ -11,7 +12,6 @@ from .base import PropertyScraper, SourceError
 
 log = logging.getLogger(__name__)
 
-
 def clean_description(text):
     if not isinstance(text, str):
         return None
@@ -20,7 +20,6 @@ def clean_description(text):
     if text.casefold() in {'', '-', '--', '/', '.', 'n/a', 'na', 'none', 'null'}:
         return None
     return text
-
 
 def description_from(p):
     alternatives = p.get('alternativeDescriptions') or {}
@@ -31,7 +30,6 @@ def description_from(p):
             return cleaned
     return None
 
-
 def parking_count(value):
     # Counts refer to the advertised dwelling. Never guess that a year-like value
     # is a construction year or allow it to establish the presence of parking.
@@ -39,14 +37,12 @@ def parking_count(value):
         return int(value)
     return None
 
-
 def value_at(data, path):
     for key in path.split('.'):
         if not isinstance(data, dict):
             return None
         data = data.get(key)
     return data
-
 
 def extra_fields(p, t, flags):
     result = {}
@@ -69,7 +65,6 @@ def extra_fields(p, t, flags):
     if (t.get('sale') or {}).get('lifeAnnuity'):
         result['life_annuity'] = True
     return result
-
 
 def normalize(data):
     p, t = data.get('property') or {}, data.get('transaction') or {}
@@ -125,33 +120,144 @@ def normalize(data):
         description=description, image_url=(pics[0].get('largeUrl') or pics[0].get('mediumUrl')) if pics else None,
         **extra_fields(p, t, flags))
 
-
-async def parse_search(html):
-    """Parse search results from Zimmo's HTML structure."""
+def parse_search(html):
     soup = BeautifulSoup(html, 'html.parser')
-    # This is a placeholder - actual Zimmo HTML parsing would go here
-    # Currently, since Cloudflare blocks normal access, this is just a template
-    
-    # Placeholder: assume we can parse like Immoweb but with Zimmo's expected structure
-    return [], 0, 1
+    # Looking for search results div with data attribute
+    node = soup.find('div', {'data-testid': 'ad-search-results'})
 
+    if not node:
+        # Try alternative selector approach
+        node = next((n for n in soup.find_all() if n.has_attr(':results')), None)
 
-async def parse_detail(html):
-    """Parse detail page from Zimmo."""
-    # Placeholder - actual parsing would depend on Zimmo's HTML structure
-    return None
+    if not node:
+        raise SourceError('Zimmo search data missing (challenge or changed page format)')
 
+    try:
+        # Try to get search data from various attribute formats that Immoweb uses
+        data = {}
+        if hasattr(node, 'get'):
+            result_data = node.get('data-search-results')
+            if not result_data:
+                result_data = node.get(':results')
+            if not result_data:
+                result_data = node.get('__vnode__')
+
+            if result_data:
+                data = json.loads(result_data)
+
+        count = int(node.get('data-search-count', 0)) or len(data.get('listings', []))
+        size = int(node.get('data-search-pagesize', 10))
+        page = int(node.get('data-search-page', 1))
+
+        if not isinstance(data, dict) or 'listings' not in data:
+            raise ValueError("Invalid search data format")
+
+        listings = data.get('listings', [])
+        return listings, math.ceil(count / size) if size > 0 else 1, page
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        # If parsing failed, let's try to find the json data manually from html
+        try:
+            # Look for window variables that contain search data
+            pattern = r'window\._config\s*=\s*(\{.*?\});'
+            match = re.search(pattern, html, re.DOTALL)
+            if match:
+                config_data = json.loads(match.group(1))
+                if 'search' in config_data and 'results' in config_data['search']:
+                    return config_data['search']['results'], 0, 1
+        except:
+            pass
+
+        raise SourceError('Invalid Zimmo pagination or listing data')
+
+def parse_detail(html):
+    # Try to find window.variable containing the classified data
+    match = re.search(r'window\.classified\s*=\s*', html)
+    if not match:
+        # Try alternative patterns
+        pattern = r'window\._data\s*=\s*(.*?);'
+        match = re.search(pattern, html, re.DOTALL)
+
+    if not match:
+        raise SourceError('Zimmo detail data missing - no classified window variable found')
+
+    try:
+        # Get everything after the matched variable
+        json_str = html[match.end():]
+        start_idx = json_str.find('{')
+        if start_idx != -1:
+            json_str = json_str[start_idx:].split(';', 1)[0]  # Get content to first semicolon
+
+        data = json.loads(json_str)
+        return normalize(data)
+    except (ValueError, TypeError) as exc:
+        raise SourceError('Invalid Zimmo detail data') from exc
 
 class ZimmoScraper(PropertyScraper):
     async def search(self, config):
-        # Zimmo.be is currently protected by Cloudflare and requires browser bypass
-        # This method follows the same structure as other scrapers but cannot function
-        # without accessing real data due to protection measures
-        
-        # In a working implementation, we would:
-        # 1. Make requests to zimmo.be search URLs
-        # 2. Extract property listing data from response pages
-        # 3. Parse those listings into individual Property objects via normalize()
-        # 4. Handle pagination properly
-        
-        raise SourceError('Adapter unavailable: public search returned a Cloudflare browser challenge during verification. No bypass implemented.')
+        # Use direct HTTP; the caller can use the Tampermonkey fallback if blocked.
+        params = {'countries': 'BE', 'orderBy': 'newest'}
+        if config.postal_codes:
+            params['postalCodes'] = ','.join(config.postal_codes)
+        for name, value in [('minPrice', config.min_price), ('maxPrice', config.max_price)]:
+            if value is not None:
+                params[name] = f'{value:g}'
+        types = config.property_types
+        kind = types[0].lower() if len(types) == 1 else 'house-and-apartment'
+
+        url = 'https://www.zimmo.be/en/search/' + (kind + '/for-sale' if kind != 'house-and-apartment' else 'house-and-apartment/for-sale')
+
+        collected, seen = [], set()
+        page = 1
+
+        while True:
+            try:
+                # Using browser automation to get search results
+                html = await self.get(url, params={**params, 'page': page})
+
+                rows, last_page, actual_page = parse_search(html)
+                if actual_page != page:
+                    raise SourceError(f'Zimmo returned page {actual_page} instead of {page}; coverage incomplete')
+                fresh = [d for d in rows if d.get('id') is not None and str(d['id']) not in seen]
+                if not rows or not fresh:
+                    if rows:
+                        log.warning('[ZIMMO] Results repeat at page %d; stopping pagination', page)
+                    break
+                for data in fresh:
+                    seen.add(str(data['id']))
+                    prop = normalize(data)
+                    if prop:
+                        collected.append(prop)
+                if page >= last_page:
+                    break
+                page += 1
+            except SourceError:
+                raise
+
+        log.info('[ZIMMO] %d active listings found across %d pages', len(collected), page)
+
+        # Filter results by configured criteria
+        candidates = [p for p in collected if matches(p, config, allow_unknown=True)]
+
+        # Perform detailed fetching to get complete property info
+        async def enrich(p):
+            # Search cards can lag behind availability changes on the detail page.
+            # Verify every candidate before returning it for an alert, even when
+            # the search card already supplies all enabled criteria.
+            try:
+                html = await self.get(p.url)
+                detail = parse_detail(html)
+                if detail is None or detail.source_listing_id != p.source_listing_id:
+                    return None
+                return detail
+            except SourceError as exc:
+                log.warning('[ZIMMO] Skipping %s: availability/details unavailable (%s)', p.source_listing_id, exc)
+                return None
+
+        # Bound tasks as well as concurrent connections.
+        enriched = []
+        for start in range(0, len(candidates), 16):
+            enriched.extend(await asyncio.gather(*(enrich(p) for p in candidates[start:start + 16])))
+
+        # Filter the results again after enrichment and return matching properties
+        final_matches = [p for p in enriched if p is not None and matches(p, config)]
+        return final_matches

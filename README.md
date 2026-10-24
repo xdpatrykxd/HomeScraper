@@ -48,6 +48,8 @@ MAX_CONCURRENT_SCRAPERS=2
 python app/main.py
 ```
 
+When Immoweb blocks direct HTTP requests, the optional Tampermonkey sender can submit listings from an Immoweb page to the local authenticated API. See [`tampermonkey/README.md`](tampermonkey/README.md). Direct HTTP remains the default scraping method for the scheduled watcher.
+
 ## Development
 
 - Scraper implementations are located in `app/scrapers/`

@@ -1,9 +1,14 @@
 import argparse
 import asyncio
 import fcntl
+import hmac
+import json
 import logging
 import signal
 import sys
+import threading
+from dataclasses import fields
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 from app.config import Settings
 from app.database import Database
@@ -19,6 +24,92 @@ from app.scrapers.immomarkt import ImmomarktScraper
 
 log = logging.getLogger(__name__)
 SCRAPERS = {'immoweb': ImmowebScraper, 'zimmo': ZimmoScraper, 'realo': RealoScraper, 'immovlan': ImmovlanScraper, 'immoscoop': ImmoscoopScraper, 'immomarkt': ImmomarktScraper}
+
+
+def serve_ingest(settings, client, db, loop):
+    if not settings.ingest_token:
+        raise ValueError('Set INGEST_API_TOKEN to enable the Tampermonkey ingest API')
+    allowed = {field.name for field in fields(Property)}
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            log.info('[INGEST] ' + fmt, *args)
+
+        def respond(self, status, payload):
+            body = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            if self.path != '/api/listings':
+                return self.respond(404, {'error': 'not found'})
+            if not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + settings.ingest_token):
+                return self.respond(401, {'error': 'unauthorized'})
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if length < 2 or length > 1_000_000:
+                    raise ValueError('body size must be 2..1000000 bytes')
+                raw = json.loads(self.rfile.read(length))
+                data = raw.get('listing') if isinstance(raw, dict) else None
+                if not isinstance(data, dict) or set(data) - allowed:
+                    raise ValueError('listing object has invalid fields')
+                data['source'] = 'immoweb'
+                if not data.get('source_listing_id') or not str(data.get('url', '')).startswith('https://www.immoweb.be/'):
+                    raise ValueError('listing requires an ID and an Immoweb URL')
+                p = Property(**data)
+                config = settings.filters()
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                return self.respond(400, {'error': str(exc)})
+            if not matches(p, config):
+                return self.respond(200, {'accepted': True, 'matched': False})
+            try:
+                asyncio.run_coroutine_threadsafe(deliver(settings, client, db, p), loop).result()
+            except Exception as exc:
+                log.error('[INGEST] Delivery failed: %s', exc)
+                return self.respond(503, {'error': 'delivery failed'})
+            return self.respond(200, {'accepted': True, 'matched': True, 'id': p.id})
+
+    server = ThreadingHTTPServer((settings.ingest_host, settings.ingest_port), Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, name='listing-ingest', daemon=True).start()
+    log.info('[INGEST] Listening on %s:%d', settings.ingest_host, settings.ingest_port)
+    return server
+
+
+async def deliver(settings, client, db, p):
+    recipients = list(dict.fromkeys(whatsapp(r) for r in settings.recipients))
+    if not recipients:
+        raise RuntimeError('No WhatsApp recipients configured')
+    notifier = Notifier(settings, client, db)
+    await notifier.ensure_ready()
+    listing_id = db.observe(p)
+    if not any(db.pending(listing_id, recipient) for recipient in recipients):
+        return
+    try:
+        await notifier.prepare(p)
+    except MessageError as exc:
+        log.error('[NOTIFICATION] %s: %s', p.source_listing_id, exc)
+        return
+    for index, recipient in enumerate(recipients, 1):
+        if not matches(p, settings.filters()):
+            break
+        if not db.claim(listing_id, recipient):
+            continue
+        try:
+            sid = await notifier.send(p, recipient)
+        except RejectedSend as exc:
+            db.delivery(listing_id, recipient, 'rejected')
+            log.error('[WHATSAPP] Recipient %d: %s', index, exc)
+        except AmbiguousSend as exc:
+            db.delivery(listing_id, recipient, 'unknown')
+            log.error('[WHATSAPP] Recipient %d: %s; automatic retry suppressed', index, exc)
+        else:
+            db.delivery(listing_id, recipient, 'accepted', sid)
+            log.info('[WHATSAPP] Accepted for recipient %d (%s)', index, sid)
+    db.complete(listing_id, recipients)
 
 
 async def scan(settings, client, db, dry_run):
@@ -86,7 +177,7 @@ async def scan(settings, client, db, dry_run):
 
 async def run(args):
     settings = Settings()
-    if not args.dry_run:
+    if not args.dry_run and not settings.ingest_token:
         settings.validate_whatsapp()
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -102,7 +193,8 @@ async def run(args):
                 sid = await notifier.send(test, recipient)
                 log.info('[WHATSAPP] Test accepted for recipient %d (%s)', index, sid)
             return 0
-        db, lock = None, None
+        db, lock, ingest_server = None, None, None
+        scheduled_scanning = True
         try:
             if not args.dry_run:
                 settings.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -112,7 +204,14 @@ async def run(args):
                 except BlockingIOError:
                     raise RuntimeError('Another watcher is already using this database') from None
                 db = Database(settings.database_path)
-            while not stop.is_set():
+                if settings.ingest_token:
+                    ingest_server = serve_ingest(settings, client, db, asyncio.get_running_loop())
+                    try:
+                        settings.validate_whatsapp()
+                    except ValueError as exc:
+                        log.warning('[INGEST] API is active; scheduled scanning disabled: %s', exc)
+                        scheduled_scanning = False
+            while scheduled_scanning and not stop.is_set():
                 try:
                     healthy = await scan(settings, client, db, args.dry_run)
                 except Exception as exc:
@@ -125,9 +224,13 @@ async def run(args):
                     await asyncio.wait_for(stop.wait(), timeout=settings.interval * 60)
                 except TimeoutError:
                     pass
+            if not scheduled_scanning:
+                await stop.wait()
             return 0
         finally:
             if db:
+                if ingest_server:
+                    ingest_server.shutdown()
                 db.close()
             if lock:
                 lock.close()

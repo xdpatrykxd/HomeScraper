@@ -155,6 +155,9 @@ class Settings:
         self.interval = float(os.getenv('CHECK_INTERVAL_MINUTES', '5'))
         self.timeout = float(os.getenv('REQUEST_TIMEOUT_SECONDS', '25'))
         self.concurrency = int(os.getenv('REQUEST_CONCURRENCY', '4'))
+        self.ingest_token = os.getenv('INGEST_API_TOKEN', '').strip()
+        self.ingest_host = os.getenv('INGEST_API_HOST', '127.0.0.1').strip()
+        self.ingest_port = int(os.getenv('INGEST_API_PORT', '8787'))
         import math
         if not all(math.isfinite(x) and x > 0 for x in (self.interval, self.timeout)) or not 1 <= self.concurrency <= 16:
             raise ValueError('Intervals/timeouts must be positive; concurrency must be 1–16')
