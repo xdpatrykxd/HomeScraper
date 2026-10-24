@@ -1,10 +1,8 @@
 // ==UserScript==
 // @name         HomeScraper property sender
 // @namespace    local.homescraper
-// @version      3.7.0
+// @version      3.8.0
 // @description  Send listings from supported Belgian property sites to HomeScraper
-// @match        https://*.immoweb.be/*
-// @match        https://immoweb.be/*
 // @match        https://*.zimmo.be/*
 // @match        https://zimmo.be/*
 // @match        https://*.realo.be/*
@@ -16,7 +14,6 @@
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // @connect      localhost
-// @connect      immoweb.be
 // @connect      zimmo.be
 // @connect      realo.be
 // @connect      immovlan.be
@@ -31,7 +28,7 @@
   const CONFIG_URL = 'http://127.0.0.1:8787/api/browser-config';
   const API_TOKEN = 'NBBDYOGZ_Y3KYhU9lFuC6z2JZIdB9U3VjP0dF6vp2l0';
   const DOMAINS = {
-    'immoweb.be': 'immoweb', 'zimmo.be': 'zimmo', 'realo.be': 'realo',
+    'zimmo.be': 'zimmo', 'realo.be': 'realo',
     'immovlan.be': 'immovlan', 'immoscoop.be': 'immoscoop',
   };
   const domain = Object.keys(DOMAINS).find(host => location.hostname === host || location.hostname.endsWith(`.${host}`));
@@ -377,11 +374,10 @@
     return JSON.parse(response.responseText);
   }
   function filteredSearchUrls(site, config) {
-    const hosts = { immoweb: 'www.immoweb.be', zimmo: 'www.zimmo.be', realo: 'www.realo.be', immovlan: 'www.immovlan.be', immoscoop: 'www.immoscoop.be' };
+      const hosts = { zimmo: 'www.zimmo.be', realo: 'www.realo.be', immovlan: 'www.immovlan.be', immoscoop: 'www.immoscoop.be' };
     const types = config.property_types?.length ? config.property_types : [null];
     return types.map(type => {
       const paths = {
-        immoweb: `/nl/zoeken/${type === 'apartment' ? 'appartement' : type === 'house' ? 'huis' : 'huis-en-appartement'}/te-koop`,
         zimmo: `/nl/zoek/te-koop${type ? `/${type === 'apartment' ? 'appartement' : 'huis'}` : ''}`,
         realo: `/nl/search${type ? `/${type === 'apartment' ? 'appartement' : 'huis'}/te-koop` : ''}`,
         immovlan: `/nl/vastgoed/${type === 'apartment' ? 'appartement' : 'huis'}`,
@@ -389,14 +385,7 @@
       };
       const url = new URL(paths[site], `https://${hosts[site]}`);
       const params = url.searchParams;
-      if (site === 'immoweb') {
-        if (config.postal_codes?.length) params.set('postalCodes', config.postal_codes.join(','));
-        if (config.min_price != null) params.set('minPrice', String(config.min_price));
-        if (config.max_price != null) params.set('maxPrice', String(config.max_price));
-        if (config.min_surface_m2 != null) params.set('minSurface', String(config.min_surface_m2));
-        if (config.min_bedrooms != null) params.set('minBedroomCount', String(config.min_bedrooms));
-        params.set('orderBy', 'newest'); params.set('page', '1');
-      } else if (site === 'immovlan') {
+      if (site === 'immovlan') {
         params.set('transactiontypes', 'te-koop,in-openbare-verkoop');
       } else if (site === 'immoscoop') {
         params.set('offerType', 'te-koop');
