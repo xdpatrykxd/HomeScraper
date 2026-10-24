@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HomeScraper property sender
 // @namespace    local.homescraper
-// @version      3.6.0
+// @version      3.7.0
 // @description  Send listings from supported Belgian property sites to HomeScraper
 // @match        https://*.immoweb.be/*
 // @match        https://immoweb.be/*
@@ -343,6 +343,13 @@
     return null;
   }
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  async function navigate(url) {
+    if (source === 'zimmo') {
+      console.info('[HomeScraper] Zimmo: waiting 20 seconds before next page.');
+      await delay(20000);
+    }
+    location.assign(url);
+  }
   const FLOW_PREFIX = 'HOMESCRAPER_VISIBLE_FLOW:';
   const FLOW_STORAGE_KEY = 'homescraper.visible-flow';
   function readFlow() {
@@ -415,7 +422,7 @@
         if (!searches.length) return console.warn('[HomeScraper] No enabled source in filters.yaml.');
         flow = { mode: 'results', searches, searchIndex: 0, config };
         saveFlow(flow);
-        location.assign(flowLink(searches[0].url, flow));
+        await navigate(flowLink(searches[0].url, flow));
         return;
       } catch (error) {
         console.error('[HomeScraper] Could not load watcher filters', error);
@@ -425,7 +432,7 @@
     const search = flow.searches?.[flow.searchIndex];
     if (search?.site !== source) {
       if (!search) { clearFlow(); console.info('[HomeScraper] Finished all enabled sources.'); return; }
-      location.assign(flowLink(search.url, flow));
+      await navigate(flowLink(search.url, flow));
       return;
     }
     if (flow?.mode === 'detail') {
@@ -437,12 +444,12 @@
       flow.index += 1;
       if (flow.index < flow.queue.length) {
         saveFlow(flow);
-        location.assign(flow.queue[flow.index].url);
+        await navigate(flow.queue[flow.index].url);
       } else {
         const resultUrl = flow.resultsUrl;
         flow.mode = 'results'; flow.queue = []; flow.index = 0;
         saveFlow(flow);
-        location.assign(resultUrl);
+        await navigate(resultUrl);
       }
       return;
     }
@@ -455,7 +462,7 @@
     if (flow.pages >= 100) {
       flow.searchIndex += 1; flow.pageUrl = null; flow.seen = []; flow.pages = 0;
       const nextSearch = flow.searches?.[flow.searchIndex];
-      if (nextSearch) { saveFlow(flow); location.assign(flowLink(nextSearch.url, flow)); }
+      if (nextSearch) { saveFlow(flow); await navigate(flowLink(nextSearch.url, flow)); }
       else { clearFlow(); console.info('[HomeScraper] Finished all enabled sources and property types.'); }
       return;
     }
@@ -471,7 +478,7 @@
     if (listings.length) {
       saveFlow(flow);
       console.info(`[HomeScraper] ${source}: visiting ${listings.length} visible-page listings in this tab.`);
-      location.assign(listings[0].url);
+      await navigate(listings[0].url);
       return;
     }
     const next = nextPage(document, location.href);
@@ -479,7 +486,7 @@
       flow.pages += 1; flow.pageUrl = next; flow.resultsUrl = next; flow.mode = 'results';
       saveFlow(flow);
       console.info(`[HomeScraper] ${source}: clicking through to next results page.`);
-      location.assign(next);
+      await navigate(next);
       return;
     }
     flow.searchIndex += 1;
@@ -487,7 +494,7 @@
     const nextSearch = flow.searches?.[flow.searchIndex];
     if (nextSearch) {
       saveFlow(flow);
-      location.assign(flowLink(nextSearch.url, flow));
+      await navigate(flowLink(nextSearch.url, flow));
     } else {
       clearFlow();
       console.info('[HomeScraper] Finished all enabled sources and property types.');
