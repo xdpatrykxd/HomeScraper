@@ -24,6 +24,10 @@ from app.scrapers.immomarkt import ImmomarktScraper
 
 log = logging.getLogger(__name__)
 SCRAPERS = {'immoweb': ImmowebScraper, 'zimmo': ZimmoScraper, 'realo': RealoScraper, 'immovlan': ImmovlanScraper, 'immoscoop': ImmoscoopScraper, 'immomarkt': ImmomarktScraper}
+SOURCE_HOSTS = {
+    'immoweb': {'immoweb.be'}, 'zimmo': {'zimmo.be'}, 'realo': {'realo.be'},
+    'immovlan': {'immovlan.be'}, 'immoscoop': {'immoscoop.be'}, 'immomarkt': {'immomarkt.be'},
+}
 
 
 def serve_ingest(settings, client, db, loop):
@@ -56,9 +60,13 @@ def serve_ingest(settings, client, db, loop):
                 data = raw.get('listing') if isinstance(raw, dict) else None
                 if not isinstance(data, dict) or set(data) - allowed:
                     raise ValueError('listing object has invalid fields')
-                data['source'] = 'immoweb'
-                if not data.get('source_listing_id') or not str(data.get('url', '')).startswith('https://www.immoweb.be/'):
-                    raise ValueError('listing requires an ID and an Immoweb URL')
+                from urllib.parse import urlsplit
+                source = data.get('source')
+                host = (urlsplit(str(data.get('url', ''))).hostname or '').lower()
+                if source not in SOURCE_HOSTS or not any(host == domain or host.endswith('.' + domain) for domain in SOURCE_HOSTS[source]):
+                    raise ValueError('listing source and URL host do not match a supported property site')
+                if urlsplit(str(data.get('url', ''))).scheme != 'https' or not data.get('source_listing_id'):
+                    raise ValueError('listing requires an ID and an HTTPS listing URL')
                 p = Property(**data)
                 config = settings.filters()
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
