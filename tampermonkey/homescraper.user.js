@@ -105,6 +105,52 @@
     Object.values(value).forEach(item => extractObjects(item, out));
     return out;
   }
+  function immowebVisibleData(doc, listing) {
+    const detail = doc.querySelector('.classified__description');
+    const rows = [...doc.querySelectorAll('.classified-table tr')];
+    function tableValue(labelPattern) {
+      const row = rows.find(item => labelPattern.test((item.querySelector('th')?.innerText ?? '').replace(/\s+/g, ' ').trim()));
+      return row?.querySelector('td')?.innerText.replace(/\s+/g, ' ').trim() ?? null;
+    }
+    function yesNo(labelPattern) {
+      const value = tableValue(labelPattern);
+      if (/^(yes|ja|oui)$/i.test(value ?? '')) return true;
+      if (/^(no|nee|non)$/i.test(value ?? '')) return false;
+      return null;
+    }
+    function matchedNumber(text, regex) {
+      const match = (text ?? '').match(regex);
+      return match ? number(match[1]) : null;
+    }
+    const info = doc.querySelector('.classified__information--property')?.innerText ?? '';
+    const priceText = doc.querySelector('.classified__price')?.innerText ?? '';
+    const addressRows = [...doc.querySelectorAll('.classified__information--address-row')].map(row => row.innerText.replace(/\s+/g, ' ').trim());
+    const location = (addressRows[1] ?? '').match(/\b([1-9]\d{3})\b\s*(?:—|-)?\s*(.*)$/);
+    const description = detail?.innerText.replace(/\s+/g, ' ').trim() ?? null;
+    const epc = tableValue(/^(?:EPC\/PEB label|EPC\/EPC label|Energy class|EPC)$/i);
+    const price = priceFromText(priceText);
+    return {
+      ...listing,
+      title: titleOrNull(detail?.querySelector('strong')?.innerText) || titleOrNull(doc.querySelector('.classified__title')?.innerText),
+      description,
+      address: addressRows[0] ?? null,
+      postal_code: location?.[1] ?? listing.postal_code,
+      city: location?.[2] || listing.city,
+      price,
+      surface_m2: matchedNumber(info, /([\d.,]+)\s*m(?:²|2)/i) ?? number(tableValue(/^(?:Usable floor area|Livable area|Living area)$/i)),
+      bedrooms: matchedNumber(info, /(\d+)\s*(?:bedrooms?|slaapkamers?|chambres?)/i) ?? number(tableValue(/^Bedrooms?$/i)),
+      bathrooms: number(tableValue(/^Bathrooms?$/i)),
+      property_type: /house|huis|woning|maison/i.test(listing.url) ? 'house' : /apartment|appartement/i.test(listing.url) ? 'apartment' : listing.property_type,
+      epc: epc && !/not specified|niet opgegeven/i.test(epc) ? epc.toUpperCase() : null,
+      epc_value: number(tableValue(/^Primary energy consumption$/i)),
+      terrace: yesNo(/^Terrace$/i), terrace_m2: number(tableValue(/^Terrace area$/i)),
+      garden: yesNo(/^Garden$/i), garden_m2: number(tableValue(/^Garden area$/i)),
+      lift: yesNo(/^(?:Elevator|Lift)$/i),
+      garage: yesNo(/^(?:Garage|Garage boxes?)$/i),
+      floor: number(tableValue(/^Floor$/i)),
+      building_floors: number(tableValue(/^(?:Number of floors|Building floors)$/i)),
+    };
+  }
   function detailData(html, listing) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     if (source === 'immoweb') {
@@ -149,6 +195,8 @@
           };
         } catch (_) { /* fall back to JSON-LD below */ }
       }
+      const visible = immowebVisibleData(doc, listing);
+      if (visible.price !== null || visible.surface_m2 !== null || visible.description) return visible;
     }
     const all = [];
     for (const node of doc.querySelectorAll('script[type="application/ld+json"]')) {
