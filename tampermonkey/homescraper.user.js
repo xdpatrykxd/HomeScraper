@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HomeScraper property sender
 // @namespace    local.homescraper
-// @version      3.1.0
+// @version      3.2.0
 // @description  Send listings from supported Belgian property sites to HomeScraper
 // @match        https://*.immoweb.be/*
 // @match        https://immoweb.be/*
@@ -75,11 +75,19 @@
       return url.href;
     } catch (_) { return null; }
   }
+  function dutchImmowebUrl(raw, baseUrl = location.href) {
+    const url = new URL(raw, baseUrl);
+    if (source === 'immoweb') url.pathname = url.pathname.replace(/^\/en(?=\/)/i, '/nl');
+    return url.href;
+  }
   function parseCard(anchor, baseUrl) {
-    const url = listingUrl(anchor.getAttribute('href') || anchor.href, baseUrl);
+    let url = listingUrl(anchor.getAttribute('href') || anchor.href, baseUrl);
     if (!url) return null;
     const parsedUrl = new URL(url);
-    if (source === 'immoweb' && !/^\/en\/classified\/[^/]+\/(?:for-sale|for-rent)\/[^/]+\/\d{4}\/\d{6,}\/?$/i.test(parsedUrl.pathname)) return null;
+    if (source === 'immoweb') {
+      if (!/^\/(?:en|nl)\/classified\/[^/]+\/(?:for-sale|for-rent|te-koop|te-huur)\/[^/]+\/\d{4}\/\d{6,}\/?$/i.test(parsedUrl.pathname)) return null;
+      url = dutchImmowebUrl(url, baseUrl);
+    }
     const id = pathId(url);
     if (!id || id.length < 4) return null;
     const card = anchor.closest('article, li, [data-testid], [class*="card"], [class*="Card"], [class*="result"], [class*="Result"]') ?? anchor.parentElement;
@@ -261,7 +269,7 @@
       /^(›|»|→)$/i.test((a.innerText || '').trim()));
     if (next) {
       const url = listingUrl(next.getAttribute('href'), currentUrl);
-      if (url && url !== currentUrl) return url;
+      if (url && url !== currentUrl) return source === 'immoweb' ? dutchImmowebUrl(url, currentUrl) : url;
     }
     const current = new URL(currentUrl);
     const currentPage = Number(current.searchParams.get('page') || current.searchParams.get('pagina') || current.searchParams.get('p'));
@@ -269,10 +277,11 @@
       const numbered = candidates.find(a => (a.innerText || '').trim() === String(currentPage + 1));
       if (numbered) {
         const url = listingUrl(numbered.getAttribute('href'), currentUrl);
-        if (url && url !== currentUrl) return url;
+        if (url && url !== currentUrl) return source === 'immoweb' ? dutchImmowebUrl(url, currentUrl) : url;
       }
       const pageKey = ['page', 'pagina', 'p'].find(key => current.searchParams.has(key));
       if (pageKey && doc.querySelector('a[rel="next"], [class*="pagination"], [class*="Pagination"]')) {
+        current.pathname = source === 'immoweb' ? current.pathname.replace(/^\/en(?=\/)/i, '/nl') : current.pathname;
         current.searchParams.set(pageKey, String(currentPage + 1));
         return current.href;
       }
@@ -323,7 +332,7 @@
     }
   }
   async function crawl() {
-    let currentUrl = location.href;
+    let currentUrl = source === 'immoweb' ? dutchImmowebUrl(location.href) : location.href;
     const seenPages = new Set();
     const seenListings = new Set();
     let pageCount = 0;
