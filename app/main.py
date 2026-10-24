@@ -30,6 +30,27 @@ SOURCE_HOSTS = {
 }
 
 
+def ingest_missing_fields(p, config):
+    missing = []
+    if not p.title:
+        missing.append('title')
+    if (config.include_keywords or config.exclude_keywords) and not p.description:
+        missing.append('description')
+    if (config.min_price is not None or config.max_price is not None) and p.price is None:
+        missing.append('price')
+    if (config.min_surface_m2 is not None or config.max_surface_m2 is not None) and p.surface_m2 is None:
+        missing.append('surface_m2')
+    if (config.min_bedrooms is not None or config.max_bedrooms is not None) and p.bedrooms is None:
+        missing.append('bedrooms')
+    if config.postal_codes and p.postal_code is None:
+        missing.append('postal_code')
+    if config.property_types and p.property_type is None:
+        missing.append('property_type')
+    if config.require_any and not any(getattr(p, name) is True for name in config.require_any):
+        missing.append('confirmed ' + ' or '.join(config.require_any))
+    return missing
+
+
 def serve_ingest(settings, client, db, loop):
     if not settings.ingest_token:
         raise ValueError('Set INGEST_API_TOKEN to enable the Tampermonkey ingest API')
@@ -71,6 +92,13 @@ def serve_ingest(settings, client, db, loop):
                 config = settings.filters()
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 return self.respond(400, {'error': str(exc)})
+            missing = ingest_missing_fields(p, config)
+            if not config.sources.get(source, False):
+                return self.respond(200, {'accepted': True, 'matched': False, 'reason': 'source disabled in filters'})
+            if missing:
+                return self.respond(200, {'accepted': True, 'matched': False, 'missing': missing})
+            if p.price is not None and p.price < 10000:
+                return self.respond(200, {'accepted': True, 'matched': False, 'reason': 'price below residential sanity floor'})
             if not matches(p, config):
                 return self.respond(200, {'accepted': True, 'matched': False})
             try:

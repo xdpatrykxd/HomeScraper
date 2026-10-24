@@ -48,6 +48,20 @@
     const parsed = Number(cleaned);
     return Number.isFinite(parsed) ? parsed : null;
   }
+  function priceFromText(text) {
+    const amount = '(?:\\d{1,3}(?:[.\\s\\u00a0\\u202f]\\d{3})+|\\d{4,})(?:,\\d{1,2})?';
+    const prefix = text.match(new RegExp(`(?:€|EUR)\\s*(${amount})`, 'i'));
+    const suffix = prefix ? null : text.match(new RegExp(`(${amount})\\s*(?:€|EUR)`, 'i'));
+    const value = prefix?.[1] ?? suffix?.[1];
+    const parsed = number(value);
+    // Residential listing cards sometimes put the surface/bedroom number
+    // beside a currency marker. Reject implausibly small amounts as bad parses.
+    return parsed !== null && parsed >= 10000 ? parsed : null;
+  }
+  function titleOrNull(value) {
+    const title = typeof value === 'string' ? value.trim() : '';
+    return title && !/^(?:apartment|appartement|house|huis|woning|maison)\s+(?:for sale|te koop|à vendre)$/i.test(title) ? title : null;
+  }
   function pathId(url) {
     const parts = new URL(url).pathname.split('/').filter(Boolean);
     const last = parts.at(-1) ?? '';
@@ -69,7 +83,6 @@
     const card = anchor.closest('article, li, [data-testid], [class*="card"], [class*="Card"], [class*="result"], [class*="Result"]') ?? anchor.parentElement;
     const text = (card?.innerText ?? anchor.innerText ?? '').replace(/\s+/g, ' ').trim();
     if (!text || text.length < 8) return null;
-    const priceMatch = text.match(/(?:€\s*|EUR\s*)([\d.,\s]{4,})|([\d.,\s]{4,})\s*€/i);
     const areaMatch = text.match(/([\d.,]+)\s*m(?:²|2)/i);
     const bedsMatch = text.match(/(\d+)\s*(?:slaapkamers?|chambres?|bedrooms?)/i);
     const postMatch = text.match(/\b([1-9]\d{3})\b/);
@@ -78,9 +91,9 @@
     const propertyType = /huis|house|maison|villa/.test(kindText) ? 'house' : /appartement|apartment|appart/.test(kindText) ? 'apartment' : null;
     return {
       source, source_listing_id: id, url,
-      title: anchor.innerText.trim() || text.slice(0, 180),
+      title: titleOrNull(anchor.innerText.trim()),
       postal_code: postMatch?.[1] ?? null,
-      price: number(priceMatch?.[1] ?? priceMatch?.[2]),
+      price: priceFromText(text),
       surface_m2: number(areaMatch?.[1]), bedrooms: number(bedsMatch?.[1]),
       property_type: propertyType, image_url: image,
     };
@@ -94,6 +107,49 @@
   }
   function detailData(html, listing) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
+    if (source === 'immoweb') {
+      const marker = html.match(/window\.classified\s*=\s*/);
+      const jsonText = marker && html.slice(marker.index + marker[0].length).match(/^\s*(\{[\s\S]*?\})\s*;/);
+      if (jsonText) {
+        try {
+          const classified = JSON.parse(jsonText[1]);
+          const p = classified.property ?? {};
+          const loc = p.location ?? {};
+          const tx = classified.transaction ?? {};
+          const sale = tx.sale ?? {};
+          const cert = tx.certificates ?? {};
+          const prices = classified.price ?? {};
+          const pictures = classified.media?.pictures ?? [];
+          const counts = [p.parkingCountIndoor, p.parkingCountOutdoor, p.parkingCountClosedBox];
+          const knownCounts = counts.filter(value => Number.isFinite(value));
+          const type = String(p.type ?? '').toLowerCase();
+          return {
+            ...listing,
+            title: titleOrNull(first(p.title, listing.title)),
+            description: first(p.alternativeDescriptions?.nl, p.alternativeDescriptions?.fr, p.description, p.salesPitch?.text, listing.description),
+            address: [loc.street, loc.number, loc.box].filter(Boolean).join(' ') || listing.address,
+            city: first(loc.locality, listing.city),
+            postal_code: loc.postalCode == null ? listing.postal_code : String(loc.postalCode),
+            price: tx.hidePrice || prices.hidePrice ? null : number(first(sale.price, prices.mainValue, listing.price)),
+            surface_m2: number(p.netHabitableSurface) ?? listing.surface_m2,
+            bedrooms: number(p.bedroomCount) ?? listing.bedrooms,
+            bathrooms: number(p.bathroomCount),
+            property_type: type === 'house' ? 'house' : type === 'apartment' ? 'apartment' : listing.property_type,
+            epc: first(cert.epcScore, tx.certificate),
+            epc_value: number(cert.primaryEnergyConsumptionPerSqm),
+            terrace: typeof p.hasTerrace === 'boolean' ? p.hasTerrace : (number(p.terraceSurface) > 0 ? true : null),
+            terrace_m2: number(p.terraceSurface),
+            garden: typeof p.hasGarden === 'boolean' ? p.hasGarden : (number(p.gardenSurface) > 0 ? true : null),
+            garden_m2: number(p.gardenSurface),
+            garage: Number.isFinite(p.parkingCountClosedBox) ? p.parkingCountClosedBox > 0 : null,
+            parking: knownCounts.some(value => value > 0) ? true : (knownCounts.length === 3 ? false : null),
+            lift: typeof p.hasLift === 'boolean' ? p.hasLift : null,
+            floor: number(loc.floor), building_floors: number(p.building?.floorCount),
+            image_url: first(pictures[0]?.largeUrl, pictures[0]?.mediumUrl, listing.image_url),
+          };
+        } catch (_) { /* fall back to JSON-LD below */ }
+      }
+    }
     const all = [];
     for (const node of doc.querySelectorAll('script[type="application/ld+json"]')) {
       try { extractObjects(JSON.parse(node.textContent), all); } catch (_) { /* malformed or unrelated JSON-LD */ }
@@ -103,23 +159,31 @@
     const address = ld.address ?? {};
     const geoAddress = address.address ?? address;
     const text = doc.body?.innerText ?? '';
-    const price = first(offers.price, ld.price, text.match(/(?:€\s*|EUR\s*)([\d.,\s]{4,})/i)?.[1]);
+    const price = first(offers.price, ld.price, priceFromText(text));
     const livingArea = ld.floorSize?.value ?? ld.floorSize;
     const beds = first(ld.numberOfBedrooms, ld.numberOfRooms);
     const pcode = first(geoAddress.postalCode, text.match(/\b([1-9]\d{3})\s+[A-ZÀ-ÿ]/i)?.[1]);
-    const terrace = /(?:terras|terrace|terrasse|balcon|balcony)/i.test(text) ? true : null;
-    const garden = /(?:tuin|garden|jardin)/i.test(text) ? true : null;
+    const description = first(ld.description, doc.querySelector('meta[name="description"]')?.content, '');
+    function explicitFeature(terms) {
+      const regex = new RegExp(`(?:${terms})(?:\\s+[^.\\n]{0,50})?`, 'i');
+      const found = regex.exec(description);
+      if (!found) return null;
+      const before = description.slice(Math.max(0, found.index - 25), found.index);
+      return /(?:geen|niet|zonder|no|without|sans|pas de)\s*$/i.test(before) ? false : true;
+    }
+    const terrace = explicitFeature('terras|terrace|terrasse|balcon|balcony');
+    const garden = explicitFeature('tuin|garden|jardin');
     const epc = text.match(/(?:EPC|PEB|EPB)\s*[:\-]?\s*(A\+{0,2}|A|B|C|D|E|F|G)\b/i)?.[1]?.toUpperCase();
     return {
       ...listing,
-      title: first(ld.name, doc.querySelector('h1')?.innerText, listing.title),
-      description: first(ld.description, doc.querySelector('meta[name="description"]')?.content),
+      title: titleOrNull(first(ld.name, doc.querySelector('h1')?.innerText, listing.title)),
+      description: first(description, null),
       city: first(geoAddress.addressLocality, geoAddress.city),
       address: first(geoAddress.streetAddress),
       postal_code: pcode == null ? listing.postal_code : String(pcode),
-      price: number(price), surface_m2: number(livingArea) ?? listing.surface_m2,
+      price: number(price) !== null && number(price) >= 10000 ? number(price) : priceFromText(text), surface_m2: number(livingArea) ?? listing.surface_m2,
       bedrooms: number(beds) ?? listing.bedrooms,
-      property_type: first(/house|house|woning|maison/i.test(String(ld['@type'])) ? 'house' : null, listing.property_type),
+      property_type: first(/house|woning|maison/i.test(String(ld['@type'])) ? 'house' : /apartment|flat/i.test(String(ld['@type'])) ? 'apartment' : null, listing.property_type),
       epc: first(ld.energyEfficiencyScaleMin, epc),
       terrace, garden,
       image_url: first(Array.isArray(ld.image) ? ld.image[0] : ld.image, listing.image_url),
