@@ -48,7 +48,7 @@ MAX_CONCURRENT_SCRAPERS=2
 python app/main.py
 ```
 
-When a platform blocks direct HTTP requests, the optional Tampermonkey sender can submit listings from Immoweb, Zimmo, Realo, Immovlan, Immoscoop, or Immomarkt to the local authenticated API. See [`tampermonkey/README.md`](tampermonkey/README.md). Direct HTTP remains the default for scheduled scraping.
+When a platform blocks direct HTTP requests, the optional Tampermonkey sender can submit listings from Immoweb, Zimmo, Realo, Immovlan, or Immoscoop to the local authenticated API. See [`tampermonkey/README.md`](tampermonkey/README.md). Direct HTTP remains the default for scheduled scraping.
 
 ## Development
 

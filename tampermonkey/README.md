@@ -1,6 +1,6 @@
 # HomeScraper Tampermonkey fallback
 
-The scheduled watcher tries direct HTTP first. When a property site blocks direct requests, install this userscript in Tampermonkey and open its search results in your browser. It supports Immoweb, Zimmo, Realo, Immovlan, Immoscoop, and Immomarkt. It reads listing cards and, when possible, listing detail pages through the browser, then submits them to HomeScraper's authenticated API.
+The scheduled watcher tries direct HTTP first. When a property site blocks direct requests, install this userscript in Tampermonkey and open its search results in your browser. It supports Immoweb, Zimmo, Realo, Immovlan, and Immoscoop. It reads listing cards and, when possible, listing detail pages through the browser, then submits them to HomeScraper's authenticated API.
 
 ## Configure the API
 

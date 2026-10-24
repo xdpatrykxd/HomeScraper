@@ -27,7 +27,6 @@ sources:
   realo: true
   immovlan: true
   immoscoop: true
-  immomarkt: true
 
 # Exclude taller buildings; missing building floor counts do not fail this limit.
 max_building_floors: 4

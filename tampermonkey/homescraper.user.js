@@ -13,8 +13,6 @@
 // @match        https://immovlan.be/*
 // @match        https://*.immoscoop.be/*
 // @match        https://immoscoop.be/*
-// @match        https://*.immomarkt.be/*
-// @match        https://immomarkt.be/*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // @connect      localhost
@@ -23,7 +21,6 @@
 // @connect      realo.be
 // @connect      immovlan.be
 // @connect      immoscoop.be
-// @connect      immomarkt.be
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -35,7 +32,7 @@
   const API_TOKEN = 'NBBDYOGZ_Y3KYhU9lFuC6z2JZIdB9U3VjP0dF6vp2l0';
   const DOMAINS = {
     'immoweb.be': 'immoweb', 'zimmo.be': 'zimmo', 'realo.be': 'realo',
-    'immovlan.be': 'immovlan', 'immoscoop.be': 'immoscoop', 'immomarkt.be': 'immomarkt',
+    'immovlan.be': 'immovlan', 'immoscoop.be': 'immoscoop',
   };
   const domain = Object.keys(DOMAINS).find(host => location.hostname === host || location.hostname.endsWith(`.${host}`));
   if (!domain) return;
@@ -317,11 +314,14 @@
     return JSON.parse(response.responseText);
   }
   function filteredSearchUrl(site, config) {
-    const hosts = { immoweb: 'www.immoweb.be', zimmo: 'www.zimmo.be', realo: 'www.realo.be', immovlan: 'www.immovlan.be', immoscoop: 'www.immoscoop.be', immomarkt: 'www.immomarkt.be' };
-    const paths = { immoweb: '/nl/zoeken/huis-en-appartement/te-koop', zimmo: '/nl/zoek/te-koop', realo: '/nl/search/te-koop', immovlan: '/nl/vastgoed/huis', immoscoop: '/zoeken/query', immomarkt: '/nl/zoeken/huis-en-appartement/te-koop' };
+    const hosts = { immoweb: 'www.immoweb.be', zimmo: 'www.zimmo.be', realo: 'www.realo.be', immovlan: 'www.immovlan.be', immoscoop: 'www.immoscoop.be' };
+    const paths = { immoweb: '/nl/zoeken/huis-en-appartement/te-koop', zimmo: '/nl/zoek/te-koop', realo: '/nl/search', immovlan: '/nl/vastgoed/huis', immoscoop: '/zoeken/query' };
+    if (site === 'realo' && config.property_types?.length === 1) {
+      paths.realo = `/nl/search/${config.property_types[0] === 'apartment' ? 'appartement' : 'huis'}/te-koop`;
+    }
     const url = new URL(paths[site], `https://${hosts[site]}`);
     const params = url.searchParams;
-    if (site === 'immoweb' || site === 'realo' || site === 'immomarkt') {
+    if (site === 'immoweb') {
       if (config.postal_codes?.length) params.set('postalCodes', config.postal_codes.join(','));
       if (config.min_price != null) params.set('minPrice', String(config.min_price));
       if (config.max_price != null) params.set('maxPrice', String(config.max_price));
@@ -335,6 +335,12 @@
     } else if (site === 'immoscoop') {
       params.set('offerType', 'te-koop');
       params.set('drawOnMap', '1');
+    } else if (site === 'realo') {
+      params.set('way', 'SALE');
+      if (config.postal_codes?.length) params.set('q', config.postal_codes.join(' '));
+      if (config.min_price != null) params.set('priceMin', String(config.min_price));
+      if (config.max_price != null) params.set('priceMax', String(config.max_price));
+      if (config.min_bedrooms != null) params.set('bedroomsMin', String(config.min_bedrooms));
     } else if (site === 'zimmo') {
       // These are the Dutch property-type routes exposed by Zimmo's search UI.
       if (config.property_types?.length === 1) {
